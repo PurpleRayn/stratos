@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#08090C" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="STRAT OS" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2308090C'/%3E%3Cpolygon points='50,18 82,50 50,82 18,50' fill='none' stroke='%23F5A623' stroke-width='3'/%3E%3Cpolygon points='50,38 62,50 50,62 38,50' fill='%23F5A623'/%3E%3C/svg%3E" />
+<title>STRAT OS</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{background:#08090C;}
+  #root{min-height:100vh;}
+  ::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-thumb{background:#161A22;border-radius:2px;}
+  input:focus,select:focus,textarea:focus{border-color:#F5A62377 !important;}
+  input::placeholder,textarea::placeholder{color:#243040;}
+  textarea{font-family:'Inter',sans-serif;}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  @keyframes flash{0%,100%{background:transparent;}50%{background:rgba(245,166,35,0.12);}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+<script>
+  // Visible fallback: if the app hasn't mounted within 6 seconds, something failed
+  // to load (usually a CDN or network issue) — show a real message instead of blank.
+  window.__stratosBootTimer = setTimeout(function(){
+    var root = document.getElementById("root");
+    if (root && root.children.length === 0) {
+      root.innerHTML =
+        '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+        'background:#08090C;color:#E6EBF2;font-family:-apple-system,sans-serif;padding:32px;text-align:center;">' +
+        '<div><div style="font-size:13px;letter-spacing:0.15em;color:#F5A623;margin-bottom:14px;">' +
+        '\u25C8 STRAT OS COULD NOT LOAD</div>' +
+        '<div style="font-size:13px;color:#8B98AC;line-height:1.6;max-width:340px;">' +
+        'This usually means React or Babel failed to load from the CDN — check your internet ' +
+        'connection and try reloading. If it keeps happening, your network or browser may be ' +
+        'blocking cdn.jsdelivr.net.</div>' +
+        '<div style="margin-top:18px;"><button onclick="location.reload()" style="background:#F5A623;' +
+        'color:#0A0A0A;border:none;border-radius:8px;padding:10px 20px;font-weight:700;' +
+        'font-family:monospace;font-size:12px;cursor:pointer;">RELOAD</button></div></div></div>';
+    }
+  }, 6000);
+</script>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useRef } = React;
+
+/* ════ TOKENS ════ */
+const mono="'JetBrains Mono', monospace", sans="'Inter', sans-serif";
+const C={bg:"#08090C",panel:"#0F1116",panel2:"#13161D",border:"#1C212B",faint:"#161A22",
+  amber:"#F5A623",gold:"#C9A84C",green:"#26C281",red:"#E5484D",blue:"#4C8DFF",
+  purple:"#9B6DFF",slate:"#8B98AC",muted:"#566173",dim:"#3A4252",text:"#E6EBF2",textDim:"#AEB7C5"};
+
+const INSTRUMENTS=[
+  {id:"NQ",full:"Nasdaq 100 Futures",color:"#9B6DFF"},
+  {id:"ES",full:"S&P 500 Futures",color:"#4C8DFF"},
+  {id:"SPY",full:"SPDR S&P 500 ETF",color:"#26C281"},
+  {id:"QQQ",full:"Invesco QQQ Trust",color:"#F5A623"}];
+const TF_LIST=["4H","D","W","M","Q"];
+const CANDLE=[{v:"1",l:"1 Inside"},{v:"2u",l:"2↑ Bull"},{v:"2d",l:"2↓ Bear"},{v:"3",l:"3 Outside"}];
+const OPENS=[{v:"above",l:"Above Open"},{v:"below",l:"Below Open"},{v:"at",l:"At Open"}];
+const SENTIMENT=[{v:"risk_on",l:"Risk On",color:"#26C281"},{v:"risk_off",l:"Risk Off",color:"#E5484D"},
+  {v:"neutral",l:"Chop / Neutral",color:"#F5A623"},{v:"squeeze",l:"Squeeze / Vol Exp",color:"#9B6DFF"}];
+const GEX_REGIME=[
+  {v:"neg",l:"Negative GEX — Below Flip",color:"#26C281",mode:"AMPLIFIER",env:"TRENDING",tradeLabel:"HIGH PROBABILITY",
+   desc:"Dealers fuel momentum. Your setup has FUEL — expect clean runs to opposing liquidity.",
+   checks:["Sweeps travel farther","PDA arrays hold cleanly","Targets hit more often","Strat patterns follow through"]},
+  {v:"flip",l:"Near Gamma Flip — Inflection",color:"#F5A623",mode:"TRANSITIONING",env:"UNCERTAIN",tradeLabel:"WAIT — NO TRADE",
+   desc:"Environment unstable. Wait for price to accept above/below before entering.",
+   checks:["Do not enter at the flip","Wait for clear acceptance","Reduce size if you trade","Expect fake moves both ways"]},
+  {v:"pos",l:"Positive GEX — Above Flip",color:"#E5484D",mode:"DAMPENER",env:"RANGING",tradeLabel:"CONTEXT ONLY",
+   desc:"Dealers absorb moves. SETUP BUILDING phase — chop = liquidity forming. Wait for the sweep.",
+   checks:["Equal highs/lows building","Previous session choppy","Dealers absorbing extremes","The sweep is coming — wait"]}];
+const TRADE_DIR=[{v:"long",l:"LONG",color:"#26C281"},{v:"short",l:"SHORT",color:"#E5484D"}];
+const OUTCOME=[{v:"win",l:"WIN",color:"#26C281"},{v:"loss",l:"LOSS",color:"#E5484D"},
+  {v:"be",l:"BREAKEVEN",color:"#F5A623"},{v:"open",l:"STILL OPEN",color:"#4C8DFF"},{v:"scratch",l:"SCRATCHED",color:"#566173"}];
+const OWNER=[{v:"buyers",l:"Buyers",color:C.green},{v:"sellers",l:"Sellers",color:C.red},{v:"contested",l:"Contested",color:C.amber}];
+
+const SETUP_STEPS=[
+  "Price builds liquidity — equal highs/lows form (chop zone)",
+  "Price SWEEPS that liquidity — stops are taken out",
+  "Price trades into an HTF PDA Array (Order Block or FVG)",
+  "Strat pattern forms on 15M — 2-2 Reversal preferred",
+  "Price breaks through True Open in your directional bias",
+  "Enter toward opposing liquidity — target 1:2 R:R"];
+const CHECKLIST=[
+  "4H showing clear direction (not choppy)?",
+  "Weekly bias aligned with 4H direction?",
+  "Liquidity swept on the 15M?",
+  "PDA Array (OB or FVG) at a key level?",
+  "Strat entry pattern forming in real-time?",
+  "GEX confirms environment (negative = green light)?"];
+const CIRCUIT_BREAKERS=[
+  {trigger:"2 losses in a row",rule:"Close the platform. Done for the day."},
+  {trigger:"$1,000 drawdown in one day",rule:"Close the platform. Done for the day."},
+  {trigger:"After any single loss",rule:"15-min break. Ask: valid setup or did I deviate?"},
+  {trigger:"Boredom or frustration",rule:"Close the chart. Return only when setup is crystal clear."}];
+
+/* ════ STORAGE (localStorage — offline, independent) ════ */
+const PFX="stratos:";
+const lsGet=(k,d)=>{try{const v=localStorage.getItem(PFX+k);return v?JSON.parse(v):d;}catch(_){return d;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(PFX+k,JSON.stringify(v));}catch(_){}};
+const loadEntries=()=>lsGet("entries",[]).sort((a,b)=>b.id-a.id);
+const saveEntries=(arr)=>lsSet("entries",arr);
+const loadWatch=()=>lsGet("watchlist",[]);
+const saveWatch=(arr)=>lsSet("watchlist",arr);
+const loadSettings=()=>lsGet("settings",{riskPerTrade:"250",maxDailyLoss:"1000",account:""});
+const saveSettings=(s)=>lsSet("settings",s);
+
+/* ════ HELPERS ════ */
+const tfcColor=v=>v==="2u"?C.green:v==="2d"?C.red:v==="3"?C.amber:C.muted;
+const tfcLabel=v=>v==="2u"?"2↑":v==="2d"?"2↓":v==="3"?"3":"1";
+const instColor=id=>INSTRUMENTS.find(i=>i.id===id)?.color||C.slate;
+const ownerColor=o=>OWNER.find(x=>x.v===o)?.color||C.amber;
+const gexData=v=>GEX_REGIME.find(g=>g.v===v);
+const fmtDate=ts=>new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+const weekKey=ts=>{const d=new Date(ts);const onejan=new Date(d.getFullYear(),0,1);
+  const wk=Math.ceil((((d-onejan)/86400000)+onejan.getDay()+1)/7);return `${d.getFullYear()}-W${String(wk).padStart(2,"0")}`;};
+
+const blankEntry=()=>({id:Date.now(),instrument:"NQ",
+  tfc:{"4H":"1",D:"1",W:"1",M:"1",Q:"1"},opens:{"4H":"at",D:"at",W:"at",M:"at",Q:"at"},
+  sentiment:"neutral",gexRegime:"neg",gexCallWall:"",gexPutWall:"",gexFlip:"",
+  contractSymbol:"",contractPrice:"",contractIV:"",spotPrice:"",
+  keyLevels:[],bias:"long",thesis:"",setupSteps:[false,false,false,false,false,false],
+  checklist:[false,false,false,false,false,false],
+  entry:"",stop:"",target1:"",target2:"",size:"",outcome:"open",exitPrice:"",pnl:"",
+  execution:"",reflection:"",grade:""});
+const blankWatch=()=>({id:Date.now(),instrument:"NQ",price:"",owner:"buyers",
+  triggerType:"break_above",note:"",armed:true,fired:false,firedAt:null});
+
+/* ════ TOPSTEPX CSV IMPORTER (verified against real fills) ════ */
+function parseCSV(text){
+  const lines=text.trim().split(/\r?\n/);
+  if(lines.length<2) return [];
+  const headers=lines[0].split(",");
+  return lines.slice(1).map(line=>{
+    const parts=[];let cur="",inQ=false;
+    for(const ch of line){
+      if(ch==='"'){inQ=!inQ;continue;}
+      if(ch===','&&!inQ){parts.push(cur);cur="";}
+      else cur+=ch;
+    }
+    parts.push(cur);
+    const row={};headers.forEach((h,i)=>row[h.trim()]=(parts[i]??"").trim());
+    return row;
+  });
+}
+function _execPrice(r){const a=parseFloat(r.ExecutePrice),b=parseFloat(r.TriggeredPrice);return(!isNaN(a)&&a)?a:(!isNaN(b)?b:0);}
+function _parseTime(r){const s=r.FilledAt||r.CreatedAt||"";const m=s.match(/(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})/);return m?new Date(+m[3],+m[1]-1,+m[2],+m[4],+m[5],+m[6]):new Date(0);}
+function _mult(c){c=(c||"").toUpperCase();if(c.startsWith("MNQ"))return 2.0;if(c.startsWith("NQ"))return 20.0;if(c.startsWith("MES"))return 5.0;if(c.startsWith("ES"))return 50.0;return 2.0;}
+function _instFrom(c){c=(c||"").toUpperCase();if(c.startsWith("MNQ")||c.startsWith("NQ"))return "NQ";if(c.startsWith("MES")||c.startsWith("ES"))return "ES";return "NQ";}
+function reconstructTrades(rows){
+  const dropped=rows.filter(r=>r.Status==="Cancelled"||r.Status==="Rejected");
+  const fills=rows.filter(r=>r.Status==="Filled").map(r=>({
+    t:_parseTime(r),px:_execPrice(r),signed:(r.Side==="Bid"?1:-1)*parseInt(r.Size||"0",10),
+    disp:r.CreationDisposition,contract:r.ContractName
+  })).sort((a,b)=>a.t-b.t);
+  const trades=[];let legs=[];let open=null;
+  const mult=fills.length?_mult(fills[0].contract):2.0;
+  const startTrade=(f)=>({contract:f.contract,instrument:_instFrom(f.contract),
+    dir:f.signed>0?"long":"short",entryTime:f.t,entries:[{px:f.px,sz:Math.abs(f.signed)}],
+    exits:[],maxSize:Math.abs(f.signed),closeReason:null});
+  for(const f of fills){
+    let remaining=f.signed;
+    while(remaining!==0&&legs.length&&(legs[0].sz>0)!==(remaining>0)){
+      const leg=legs[0];const close=Math.min(Math.abs(leg.sz),Math.abs(remaining));
+      const pnl=(leg.sz>0?(f.px-leg.px):(leg.px-f.px))*close*mult;
+      if(open){open.exits.push({px:f.px,sz:close,pnl,reason:f.disp});open.closeReason=f.disp;}
+      if(Math.abs(leg.sz)>close)leg.sz+=(leg.sz>0?-close:close);else legs.shift();
+      remaining-=(remaining>0?close:-close);
+      if(legs.length===0&&open){open.exitTime=f.t;open.pnl=open.exits.reduce((s,x)=>s+x.pnl,0);trades.push(open);open=null;}
+    }
+    if(remaining!==0){
+      if(!open)open=startTrade({...f,signed:remaining});
+      else{open.entries.push({px:f.px,sz:Math.abs(remaining)});open.maxSize=Math.max(open.maxSize,open.entries.reduce((s,e)=>s+e.sz,0));}
+      legs.push({sz:remaining,px:f.px});
+    }
+  }
+  let openTrade=null;
+  if(open){const netOpen=legs.reduce((s,l)=>s+l.sz,0);
+    const denom=legs.reduce((s,l)=>s+Math.abs(l.sz),0)||1;
+    const avgPx=legs.reduce((s,l)=>s+l.px*Math.abs(l.sz),0)/denom;
+    openTrade={...open,stillOpen:true,openContracts:netOpen,avgOpenPx:avgPx,pnl:open.exits.reduce((s,x)=>s+x.pnl,0)};}
+  return {trades,openTrade,droppedCount:dropped.length,filledCount:fills.length,mult};
+}
+// Convert a reconstructed trade into a journal entry shell
+function tradeToEntry(t){
+  const e=blankEntry();
+  e.id=t.entryTime.getTime()+Math.floor(Math.random()*1000);
+  e.instrument=t.instrument;
+  e.bias=t.dir;
+  const avgEntry=t.entries.reduce((s,x)=>s+x.px*x.sz,0)/t.entries.reduce((s,x)=>s+x.sz,0);
+  const avgExit=t.exits.length?t.exits.reduce((s,x)=>s+x.px*x.sz,0)/t.exits.reduce((s,x)=>s+x.sz,0):0;
+  e.entry=avgEntry.toFixed(2);
+  e.exitPrice=avgExit?avgExit.toFixed(2):"";
+  e.size=String(t.maxSize);
+  e.pnl=(t.pnl>=0?"+":"")+t.pnl.toFixed(2);
+  e.outcome=t.pnl>0?"win":t.pnl<0?"loss":"be";
+  const reasonMap={StopLoss:"Stopped out",TakeProfit:"Hit target",Trader:"Manual close",ClosePosition:"Manual close"};
+  e.thesis=`Imported from TopstepX — ${t.dir.toUpperCase()} ${t.maxSize} ${t.contract}. Closed by ${reasonMap[t.closeReason]||t.closeReason||"—"}.`;
+  e.imported=true;
+  return e;
+}
+
+/* ════ GEX SCREENSHOT (session-scoped, replaces daily) ════ */
+const loadGex=()=>lsGet("gex",{img:null,regime:"neg",callWall:"",putWall:"",flip:"",note:"",updated:null});
+const saveGex=(g)=>lsSet("gex",g);
+
+const TRIGGER_TYPES=[
+  {v:"break_above",l:"Break ABOVE",color:C.green},
+  {v:"break_below",l:"Break BELOW",color:C.red},
+  {v:"reject_at",l:"Reject AT",color:C.amber},
+  {v:"reclaim",l:"Reclaim",color:C.blue}];
+
+function qualityScore(e){
+  const checks=e.checklist.filter(Boolean).length;
+  const steps=e.setupSteps.filter(Boolean).length;
+  const gexBonus=e.gexRegime==="neg"?1:e.gexRegime==="flip"?-2:0;
+  return Math.max(0,Math.min(10,Math.round((checks/6)*5+(steps/6)*4+gexBonus)));}
+function scoreVerdict(s){
+  if(s>=9)return{label:"A+ · TAKE IT",color:C.green};
+  if(s>=8)return{label:"TAKE IT",color:C.green};
+  if(s>=6)return{label:"SKIP IT",color:C.amber};
+  return{label:"WALK AWAY",color:C.red};}
+function sizeCalc(entry,stop,risk,instrument){
+  const en=parseFloat(entry),st=parseFloat(stop),rk=parseFloat(risk);
+  if(!en||!st||!rk)return null;const stopPts=Math.abs(en-st);if(!stopPts)return null;
+  const ptValue=instrument==="NQ"?0.50:instrument==="ES"?5:1;
+  return{stopPts:stopPts.toFixed(1),contracts:(rk/(stopPts*ptValue)).toFixed(2),ptValue};}
+
+/* ════ PRIMITIVES ════ */
+function Field({label,children,full}){return(
+  <div style={{display:"flex",flexDirection:"column",gap:5,...(full?{gridColumn:"1 / -1"}:{})}}>
+    <span style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.12em",textTransform:"uppercase"}}>{label}</span>
+    {children}</div>);}
+const inp=(a=C.textDim)=>({background:C.bg,border:`1px solid ${C.border}`,color:a,fontFamily:mono,fontSize:"13px",padding:"9px 11px",borderRadius:"7px",width:"100%",outline:"none"});
+const sel=(a=C.textDim)=>({...inp(a),cursor:"pointer"});
+function Pill({children,color,active,onClick,sm}){return(
+  <button onClick={onClick} style={{background:active?`${color}1E`:"transparent",border:`1px solid ${active?color:C.border}`,
+    color:active?color:C.muted,padding:sm?"5px 10px":"7px 13px",borderRadius:"999px",fontFamily:mono,
+    fontSize:sm?"10px":"11px",fontWeight:600,letterSpacing:"0.04em",cursor:"pointer",transition:"all 0.15s",whiteSpace:"nowrap"}}>{children}</button>);}
+function SectionHead({n,title,sub,right}){return(
+  <div style={{marginBottom:14}}>
+    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+      <span style={{fontFamily:mono,fontSize:"10px",color:C.amber,letterSpacing:"0.1em"}}>{n}</span>
+      <h3 style={{fontFamily:sans,fontSize:"14px",fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>{title}</h3>
+      {right&&<div style={{marginLeft:"auto"}}>{right}</div>}</div>
+    {sub&&<p style={{fontFamily:sans,fontSize:"11px",color:C.muted,marginTop:4,lineHeight:1.5}}>{sub}</p>}</div>);}
+function CheckRow({checked,onToggle,children,color=C.green}){return(
+  <button onClick={onToggle} style={{display:"flex",alignItems:"flex-start",gap:10,background:"transparent",border:"none",padding:"7px 0",cursor:"pointer",textAlign:"left",width:"100%"}}>
+    <span style={{flexShrink:0,width:18,height:18,borderRadius:"5px",marginTop:1,border:`1.5px solid ${checked?color:C.dim}`,
+      background:checked?color:"transparent",display:"flex",alignItems:"center",justifyContent:"center",
+      fontFamily:mono,fontSize:"11px",color:"#0A0A0A",fontWeight:700,transition:"all 0.15s"}}>{checked?"✓":""}</span>
+    <span style={{fontFamily:sans,fontSize:"13px",color:checked?C.textDim:C.muted,lineHeight:1.45}}>{children}</span></button>);}
+
+/* ════ GEX PANEL ════ */
+function GexPanel({value,onChange}){
+  const g=gexData(value);
+  return(<div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+      {GEX_REGIME.map(opt=>(
+        <button key={opt.v} onClick={()=>onChange(opt.v)} style={{background:value===opt.v?`${opt.color}14`:C.bg,
+          border:`1px solid ${value===opt.v?opt.color:C.border}`,borderRadius:"9px",padding:"11px 8px",cursor:"pointer",textAlign:"center",transition:"all 0.15s"}}>
+          <div style={{fontFamily:mono,fontWeight:700,fontSize:"11px",letterSpacing:"0.04em",color:value===opt.v?opt.color:C.muted}}>
+            {opt.v==="neg"?"−GEX":opt.v==="flip"?"FLIP":"+GEX"}</div>
+          <div style={{fontFamily:sans,fontSize:"8px",color:C.dim,marginTop:3}}>{opt.v==="neg"?"Below Flip":opt.v==="flip"?"At Flip":"Above Flip"}</div>
+        </button>))}
+    </div>
+    {g&&(<div style={{background:`${g.color}0C`,border:`1px solid ${g.color}33`,borderRadius:"10px",padding:"14px"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <div style={{background:"rgba(0,0,0,0.3)",borderRadius:"7px",padding:"9px"}}>
+          <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.12em",marginBottom:3}}>DEALER MODE</div>
+          <div style={{fontFamily:mono,fontSize:"13px",fontWeight:700,color:g.color}}>{g.mode}</div></div>
+        <div style={{background:"rgba(0,0,0,0.3)",borderRadius:"7px",padding:"9px"}}>
+          <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.12em",marginBottom:3}}>ENVIRONMENT</div>
+          <div style={{fontFamily:mono,fontSize:"13px",fontWeight:700,color:g.color}}>{g.env}</div></div>
+      </div>
+      <div style={{background:"rgba(0,0,0,0.35)",borderRadius:"7px",padding:"11px",borderLeft:`3px solid ${g.color}`,marginBottom:11}}>
+        <div style={{fontFamily:mono,fontSize:"9px",fontWeight:700,letterSpacing:"0.12em",color:g.color,marginBottom:4}}>{g.tradeLabel}</div>
+        <div style={{fontFamily:sans,fontSize:"12px",color:C.textDim,lineHeight:1.5}}>{g.desc}</div></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+        {g.checks.map((c,i)=>(<div key={i} style={{display:"flex",gap:6,fontFamily:sans,fontSize:"11px",color:C.muted,alignItems:"flex-start"}}>
+          <span style={{color:g.color,flexShrink:0}}>›</span>{c}</div>))}</div>
+    </div>)}
+  </div>);}
+
+/* ════ LEVEL BATTLE MAP ════ */
+function LevelEditor({levels,onChange}){
+  const add=()=>onChange([...levels,{id:Date.now(),label:"",price:"",owner:"buyers"}]);
+  const rm=id=>onChange(levels.filter(l=>l.id!==id));
+  const up=(id,f,v)=>onChange(levels.map(l=>l.id===id?{...l,[f]:v}:l));
+  const sorted=[...levels].filter(l=>l.price).sort((a,b)=>parseFloat(b.price)-parseFloat(a.price));
+  return(<div>
+    {sorted.length>0&&(<div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:"9px",padding:"12px",marginBottom:12}}>
+      <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.12em",marginBottom:8}}>BATTLE LADDER (HIGH → LOW)</div>
+      {sorted.map(l=>{const oc=ownerColor(l.owner);return(
+        <div key={l.id} style={{display:"flex",alignItems:"center",gap:9,padding:"5px 0"}}>
+          <span style={{width:7,height:7,borderRadius:"50%",background:oc,boxShadow:`0 0 7px ${oc}88`}}/>
+          <span style={{background:`${oc}16`,border:`1px solid ${oc}44`,borderRadius:"5px",padding:"2px 9px",fontFamily:mono,fontSize:"12px",fontWeight:700,color:oc,minWidth:84,textAlign:"right"}}>{l.price}</span>
+          <span style={{fontFamily:mono,fontSize:"10px",color:C.muted}}>{l.label||"—"}</span>
+          <span style={{marginLeft:"auto",fontFamily:sans,fontSize:"10px",color:`${oc}AA`}}>
+            {l.owner==="buyers"?"▲ buyers defend":l.owner==="sellers"?"▼ sellers defend":"◈ contested"}</span></div>);})}
+    </div>)}
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {levels.map(l=>{const oc=ownerColor(l.owner);return(
+        <div key={l.id} style={{background:C.bg,border:`1px solid ${oc}33`,borderLeft:`3px solid ${oc}`,borderRadius:"8px",padding:"10px"}}>
+          <div style={{display:"flex",gap:7,flexWrap:"wrap",alignItems:"center"}}>
+            <input placeholder="Label (PDH, GEX wall…)" value={l.label} onChange={e=>up(l.id,"label",e.target.value)} style={{...inp(C.slate),width:150,fontSize:"12px",padding:"6px 9px"}}/>
+            <input placeholder="Price" value={l.price} onChange={e=>up(l.id,"price",e.target.value)} style={{...inp(oc),width:90,fontSize:"12px",padding:"6px 9px",fontWeight:700}}/>
+            <select value={l.owner} onChange={e=>up(l.id,"owner",e.target.value)} style={{...sel(oc),width:120,fontSize:"11px",padding:"6px 9px"}}>
+              {OWNER.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select>
+            <button onClick={()=>rm(l.id)} style={{marginLeft:"auto",background:"transparent",border:`1px solid ${C.faint}`,color:C.dim,borderRadius:"6px",padding:"6px 10px",cursor:"pointer",fontFamily:mono,fontSize:"11px"}}>✕</button></div>
+          {l.price&&(<div style={{marginTop:8,padding:"7px 10px",background:`${oc}0C`,borderLeft:`2px solid ${oc}44`,borderRadius:"4px",fontFamily:sans,fontSize:"11px",color:C.muted,lineHeight:1.5}}>
+            <span style={{fontFamily:mono,fontSize:"9px",color:`${oc}AA`,letterSpacing:"0.08em"}}>FLIP → </span>
+            {l.owner==="buyers"?`Lose ${l.price} → sellers take over, accelerate lower. Short until reclaim.`
+              :l.owner==="sellers"?`Reclaim ${l.price} → buyers take over, accelerate higher. Long until re-test.`
+              :`${l.price} = no-man's-land. 4H close above → buyers; below → sellers.`}</div>)}
+        </div>);})}
+    </div>
+    <button onClick={add} style={{width:"100%",marginTop:10,padding:"9px",background:"transparent",border:`1px dashed ${C.border}`,borderRadius:"7px",color:C.dim,fontFamily:mono,fontSize:"11px",letterSpacing:"0.08em",cursor:"pointer"}}>+ ADD LEVEL</button>
+  </div>);}
+
+/* ════ ENTRY FORM ════ */
+function EntryForm({initial,settings,onSave,onCancel,isEdit}){
+  const [e,setE]=useState(initial);
+  const set=(f,v)=>setE(p=>({...p,[f]:v}));
+  const setTfc=(tf,v)=>setE(p=>({...p,tfc:{...p.tfc,[tf]:v}}));
+  const setOpen=(tf,v)=>setE(p=>({...p,opens:{...p.opens,[tf]:v}}));
+  const toggleArr=(field,i)=>setE(p=>({...p,[field]:p[field].map((x,j)=>j===i?!x:x)}));
+  const score=qualityScore(e),verdict=scoreVerdict(score);
+  const rr=(()=>{const en=parseFloat(e.entry),st=parseFloat(e.stop),t1=parseFloat(e.target1);
+    if(!en||!st||!t1)return null;const risk=Math.abs(en-st),rew=Math.abs(t1-en);return risk?(rew/risk).toFixed(2):null;})();
+  const scz=sizeCalc(e.entry,e.stop,settings.riskPerTrade,e.instrument);
+  return(<div style={{display:"flex",flexDirection:"column",gap:22}}>
+    <div><SectionHead n="01" title="Instrument"/>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {INSTRUMENTS.map(i=>(<button key={i.id} onClick={()=>set("instrument",i.id)} style={{flex:"1 1 0",minWidth:70,padding:"12px 8px",
+          background:e.instrument===i.id?`${i.color}1A`:C.bg,border:`1px solid ${e.instrument===i.id?i.color:C.border}`,borderRadius:"10px",cursor:"pointer",transition:"all 0.15s"}}>
+          <div style={{fontFamily:mono,fontWeight:700,fontSize:"16px",color:e.instrument===i.id?i.color:C.slate}}>{i.id}</div>
+          <div style={{fontFamily:sans,fontSize:"8px",color:C.dim,marginTop:2}}>{i.full}</div></button>))}</div></div>
+
+    <div><SectionHead n="02" title="Step 0 — GEX Regime" sub="Before touching the chart: where is price vs the Gamma Flip? This sets your whole environment."/>
+      <GexPanel value={e.gexRegime} onChange={v=>set("gexRegime",v)}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:12}}>
+        <Field label="Call Wall"><input value={e.gexCallWall} onChange={ev=>set("gexCallWall",ev.target.value)} placeholder="resist" style={inp(C.red)}/></Field>
+        <Field label="Put Wall"><input value={e.gexPutWall} onChange={ev=>set("gexPutWall",ev.target.value)} placeholder="support" style={inp(C.green)}/></Field>
+        <Field label="Flip Level"><input value={e.gexFlip} onChange={ev=>set("gexFlip",ev.target.value)} placeholder="inflection" style={inp(C.amber)}/></Field></div></div>
+
+    <div><SectionHead n="03" title="Time Frame Continuity" sub="Candle type + price vs each TF open."/>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {TF_LIST.map(tf=>(<div key={tf} style={{display:"flex",gap:9,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{fontFamily:mono,fontWeight:700,fontSize:"13px",color:tfcColor(e.tfc[tf]),width:30}}>{tf}</span>
+          <select value={e.tfc[tf]} onChange={ev=>setTfc(tf,ev.target.value)} style={{...sel(tfcColor(e.tfc[tf])),width:130}}>
+            {CANDLE.map(c=><option key={c.v} value={c.v}>{c.l}</option>)}</select>
+          <select value={e.opens[tf]} onChange={ev=>setOpen(tf,ev.target.value)} style={{...sel(e.opens[tf]==="above"?C.green:e.opens[tf]==="below"?C.red:C.amber),width:130}}>
+            {OPENS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select></div>))}</div>
+      <div style={{marginTop:12,padding:"9px 12px",background:C.bg,borderRadius:"7px",display:"flex",gap:13,flexWrap:"wrap"}}>
+        {TF_LIST.map(tf=>(<span key={tf} style={{display:"flex",gap:4,alignItems:"center"}}>
+          <span style={{fontFamily:mono,fontSize:"10px",color:C.muted}}>{tf}</span>
+          <span style={{fontFamily:mono,fontSize:"13px",fontWeight:700,color:tfcColor(e.tfc[tf])}}>{tfcLabel(e.tfc[tf])}</span>
+          <span style={{fontSize:"8px",color:e.opens[tf]==="above"?`${C.green}66`:e.opens[tf]==="below"?`${C.red}66`:`${C.amber}66`}}>
+            {e.opens[tf]==="above"?"▲":e.opens[tf]==="below"?"▼":"≈"}</span></span>))}</div></div>
+
+    <div><SectionHead n="04" title="Sentiment & Contract"/>
+      <Field label="Market Sentiment" full><div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>
+        {SENTIMENT.map(s=><Pill key={s.v} color={s.color} active={e.sentiment===s.v} onClick={()=>set("sentiment",s.v)}>{s.l}</Pill>)}</div></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Spot / Index"><input value={e.spotPrice} onChange={ev=>set("spotPrice",ev.target.value)} placeholder="underlying" style={inp()}/></Field>
+        <Field label="Contract Symbol"><input value={e.contractSymbol} onChange={ev=>set("contractSymbol",ev.target.value)} placeholder="QQQ 6/20 480C" style={inp(C.blue)}/></Field>
+        <Field label="Contract Price"><input value={e.contractPrice} onChange={ev=>set("contractPrice",ev.target.value)} placeholder="$ premium" style={inp(C.blue)}/></Field>
+        <Field label="Implied Vol"><input value={e.contractIV} onChange={ev=>set("contractIV",ev.target.value)} placeholder="% IV" style={inp(C.purple)}/></Field></div></div>
+
+    <div><SectionHead n="05" title="Key Levels — Battle Map" sub="Where buyers/sellers defend. Auto-generates flip scenarios."/>
+      <LevelEditor levels={e.keyLevels} onChange={v=>set("keyLevels",v)}/></div>
+
+    <div><SectionHead n="06" title="The Only Setup — 6 Steps" sub="Cannot identify ALL 6 clearly? This is NOT your setup. Walk away."/>
+      <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:"10px",padding:"6px 14px"}}>
+        {SETUP_STEPS.map((s,i)=>(<CheckRow key={i} checked={e.setupSteps[i]} onToggle={()=>toggleArr("setupSteps",i)} color={C.purple}>
+          <span style={{fontFamily:mono,fontSize:"11px",color:C.dim,marginRight:6}}>{i+1}</span>{s}</CheckRow>))}</div></div>
+
+    <div><SectionHead n="07" title="Pre-Trade Checklist" sub="One NO = No Trade."/>
+      <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:"10px",padding:"6px 14px"}}>
+        {CHECKLIST.map((c,i)=>(<CheckRow key={i} checked={e.checklist[i]} onToggle={()=>toggleArr("checklist",i)}>{c}</CheckRow>))}</div>
+      <div style={{marginTop:12,display:"flex",alignItems:"center",gap:14,background:`${verdict.color}10`,border:`1px solid ${verdict.color}44`,borderRadius:"10px",padding:"14px 16px"}}>
+        <div style={{textAlign:"center"}}><div style={{fontFamily:mono,fontWeight:700,fontSize:"30px",color:verdict.color,lineHeight:1}}>{score}</div>
+          <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.1em",marginTop:2}}>/10</div></div>
+        <div><div style={{fontFamily:mono,fontWeight:700,fontSize:"15px",color:verdict.color,letterSpacing:"0.04em"}}>{verdict.label}</div>
+          <div style={{fontFamily:sans,fontSize:"11px",color:C.muted,marginTop:3}}>Auto-calculated from checklist, setup steps, and GEX regime.</div></div></div></div>
+
+    <div><SectionHead n="08" title="Bias & Thesis"/>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>{TRADE_DIR.map(d=><Pill key={d.v} color={d.color} active={e.bias===d.v} onClick={()=>set("bias",d.v)}>{d.l}</Pill>)}</div>
+      <textarea value={e.thesis} onChange={ev=>set("thesis",ev.target.value)} rows={4}
+        placeholder="Setup? Why this direction? What confirms / invalidates? Reference TFC + GEX + levels + True Open."
+        style={{...inp(),fontFamily:sans,fontSize:"13px",lineHeight:1.6,resize:"vertical"}}/></div>
+
+    <div><SectionHead n="09" title="Execution Plan" right={<span style={{fontFamily:mono,fontSize:"9px",color:C.dim}}>RISK ${settings.riskPerTrade}/trade</span>}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Entry"><input value={e.entry} onChange={ev=>set("entry",ev.target.value)} placeholder="0.00" style={inp(C.blue)}/></Field>
+        <Field label="Stop"><input value={e.stop} onChange={ev=>set("stop",ev.target.value)} placeholder="0.00" style={inp(C.red)}/></Field>
+        <Field label="Size"><input value={e.size} onChange={ev=>set("size",ev.target.value)} placeholder="contracts" style={inp()}/></Field>
+        <Field label="Target 1"><input value={e.target1} onChange={ev=>set("target1",ev.target.value)} placeholder="0.00" style={inp(C.green)}/></Field>
+        <Field label="Target 2"><input value={e.target2} onChange={ev=>set("target2",ev.target.value)} placeholder="0.00" style={inp(C.green)}/></Field>
+        <Field label="R:R (auto)"><div style={{...inp(rr?(parseFloat(rr)>=2?C.green:parseFloat(rr)>=1?C.amber:C.red):C.dim),display:"flex",alignItems:"center",fontWeight:700}}>{rr?`${rr} : 1`:"—"}</div></Field></div>
+      {scz&&(<div style={{marginTop:12,background:C.bg,border:`1px solid ${C.border}`,borderRadius:"9px",padding:"12px 14px",display:"flex",gap:18,flexWrap:"wrap",alignItems:"center"}}>
+        <div><div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.1em"}}>STOP DISTANCE</div><div style={{fontFamily:mono,fontSize:"15px",fontWeight:700,color:C.textDim}}>{scz.stopPts} pts</div></div>
+        <div><div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.1em"}}>SUGGESTED SIZE</div><div style={{fontFamily:mono,fontSize:"15px",fontWeight:700,color:C.amber}}>{scz.contracts} contracts</div></div>
+        <div style={{fontFamily:sans,fontSize:"10px",color:C.dim,maxWidth:160}}>Based on ${settings.riskPerTrade} risk ÷ (stop × ${scz.ptValue}/pt {e.instrument})</div></div>)}</div>
+
+    <div><SectionHead n="10" title="Result" sub="Fill in after the trade closes."/>
+      <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>{OUTCOME.map(o=><Pill key={o.v} color={o.color} active={e.outcome===o.v} onClick={()=>set("outcome",o.v)}>{o.l}</Pill>)}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Exit Price"><input value={e.exitPrice} onChange={ev=>set("exitPrice",ev.target.value)} placeholder="0.00" style={inp()}/></Field>
+        <Field label="P&L ($ or R)"><input value={e.pnl} onChange={ev=>set("pnl",ev.target.value)} placeholder="+/-" style={inp(e.pnl.trim().startsWith("-")?C.red:e.pnl.trim()?C.green:C.textDim)}/></Field></div></div>
+
+    <div><SectionHead n="11" title="Execution & Reflection" sub="The three questions after every trade."/>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <Field label="Q1 — Did I follow the full checklist exactly?"><textarea value={e.execution} onChange={ev=>set("execution",ev.target.value)} rows={2}
+          placeholder="Yes / No — entry discipline, did I chase, respect stop, take profit per plan…" style={{...inp(),fontFamily:sans,fontSize:"13px",lineHeight:1.6,resize:"vertical"}}/></Field>
+        <Field label="Q2 — Invalid setup or deviation? · Q3 — One thing to do better"><textarea value={e.reflection} onChange={ev=>set("reflection",ev.target.value)} rows={3}
+          placeholder="Lessons, emotional state, the one specific improvement for next trade…" style={{...inp(),fontFamily:sans,fontSize:"13px",lineHeight:1.6,resize:"vertical"}}/></Field>
+        <Field label="Self Grade (A–F)"><div style={{display:"flex",gap:6}}>
+          {["A","B","C","D","F"].map(g=><Pill key={g} color={g==="A"?C.green:g==="B"?C.blue:g==="C"?C.amber:C.red} active={e.grade===g} onClick={()=>set("grade",g)}>{g}</Pill>)}</div></Field></div></div>
+
+    <div style={{display:"flex",gap:10,position:"sticky",bottom:0,background:`linear-gradient(180deg, transparent, ${C.bg} 40%)`,paddingTop:16,paddingBottom:6}}>
+      <button onClick={onCancel} style={{flex:"0 0 auto",padding:"13px 20px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:"9px",color:C.muted,fontFamily:mono,fontSize:"12px",cursor:"pointer"}}>CANCEL</button>
+      <button onClick={()=>onSave(e)} style={{flex:1,padding:"13px",background:`linear-gradient(135deg, ${C.amber}, ${C.amber}CC)`,border:"none",borderRadius:"9px",color:"#0A0A0A",fontFamily:mono,fontWeight:700,fontSize:"12px",letterSpacing:"0.1em",cursor:"pointer"}}>◈ {isEdit?"UPDATE":"SAVE TO JOURNAL"}</button></div>
+  </div>);}
+
+/* ════ WATCHLIST + TRIGGERS + ALERTS ════ */
+function WatchlistView({watch,onChange,onCheckAlerts}){
+  const [spotInput,setSpotInput]=useState({});
+  const add=()=>onChange([blankWatch(),...watch]);
+  const rm=id=>onChange(watch.filter(w=>w.id!==id));
+  const up=(id,f,v)=>onChange(watch.map(w=>w.id===id?{...w,[f]:v}:w));
+
+  const triggerColor=t=>TRIGGER_TYPES.find(x=>x.v===t)?.color||C.amber;
+  const triggerLabel=t=>TRIGGER_TYPES.find(x=>x.v===t)?.l||t;
+
+  // Evaluate a live price against a watch trigger
+  const evaluate=(w,spot)=>{
+    const p=parseFloat(w.price),s=parseFloat(spot);
+    if(!p||isNaN(s))return false;
+    if(w.triggerType==="break_above"||w.triggerType==="reclaim")return s>=p;
+    if(w.triggerType==="break_below")return s<=p;
+    if(w.triggerType==="reject_at")return Math.abs(s-p)/p<0.0008; // within ~8bps
+    return false;
+  };
+
+  const checkOne=(w)=>{
+    const spot=spotInput[w.id];
+    if(spot===undefined||spot==="")return;
+    const hit=evaluate(w,spot);
+    if(hit&&w.armed&&!w.fired){
+      up(w.id,"fired",true);
+      onChange(watch.map(x=>x.id===w.id?{...x,fired:true,firedAt:Date.now()}:x));
+      // browser notification + vibration
+      try{
+        if("Notification" in window && Notification.permission==="granted"){
+          new Notification("STRAT OS — Trigger Hit",{body:`${w.instrument} ${triggerLabel(w.triggerType)} ${w.price}${w.note?" · "+w.note:""}`});
+        }
+        if(navigator.vibrate)navigator.vibrate([120,60,120]);
+      }catch(_){}
+    }
+  };
+
+  return(<div style={{animation:"fadeUp 0.3s ease both"}}>
+    <SectionHead n="◈" title="Watchlist & Triggers" sub="Mark levels and a trigger condition. Enter the live price to test; armed triggers fire an alert + notification."
+      right={<button onClick={async()=>{try{if("Notification" in window){const p=await Notification.requestPermission();}}catch(_){}}}
+        style={{background:"transparent",border:`1px solid ${C.border}`,color:C.dim,borderRadius:"6px",padding:"5px 10px",fontFamily:mono,fontSize:"9px",cursor:"pointer",letterSpacing:"0.06em"}}>🔔 ENABLE ALERTS</button>}/>
+
+    <button onClick={add} style={{width:"100%",padding:"12px",background:"transparent",border:`1px dashed ${C.border}`,borderRadius:"9px",
+      color:C.amber,fontFamily:mono,fontSize:"11px",letterSpacing:"0.1em",cursor:"pointer",marginBottom:16}}>+ ADD WATCH LEVEL</button>
+
+    {watch.length===0?(
+      <div style={{textAlign:"center",padding:"40px 20px",fontFamily:sans,fontSize:"12px",color:C.dim}}>
+        No watch levels yet. Add the price levels you are stalking and how you want to be triggered.</div>
+    ):(
+      <div style={{display:"flex",flexDirection:"column",gap:11}}>
+        {watch.map(w=>{const tc=triggerColor(w.triggerType);const ic=instColor(w.instrument);return(
+          <div key={w.id} style={{background:C.panel,border:`1px solid ${w.fired?tc:C.border}`,borderLeft:`3px solid ${ic}`,
+            borderRadius:"11px",padding:"14px",...(w.fired?{animation:"flash 1.5s ease infinite"}:{})}}>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
+              <select value={w.instrument} onChange={e=>up(w.id,"instrument",e.target.value)} style={{...sel(ic),width:80,fontSize:"12px",padding:"6px 9px",fontWeight:700}}>
+                {INSTRUMENTS.map(i=><option key={i.id} value={i.id}>{i.id}</option>)}</select>
+              <input placeholder="Level" value={w.price} onChange={e=>up(w.id,"price",e.target.value)} style={{...inp(tc),width:90,fontSize:"13px",padding:"6px 9px",fontWeight:700}}/>
+              <select value={w.triggerType} onChange={e=>up(w.id,"triggerType",e.target.value)} style={{...sel(tc),width:140,fontSize:"11px",padding:"6px 9px"}}>
+                {TRIGGER_TYPES.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}</select>
+              <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
+                <button onClick={()=>up(w.id,"armed",!w.armed)} style={{background:w.armed?`${C.green}1E`:"transparent",border:`1px solid ${w.armed?C.green:C.border}`,
+                  color:w.armed?C.green:C.dim,borderRadius:"6px",padding:"5px 9px",fontFamily:mono,fontSize:"9px",cursor:"pointer",letterSpacing:"0.06em"}}>{w.armed?"ARMED":"OFF"}</button>
+                <button onClick={()=>rm(w.id)} style={{background:"transparent",border:"none",color:C.dim,cursor:"pointer",fontSize:"12px"}}>✕</button></div>
+            </div>
+            <input placeholder="Note — why this level matters (PDH sweep, GEX call wall, OB…)" value={w.note} onChange={e=>up(w.id,"note",e.target.value)}
+              style={{...inp(C.muted),fontFamily:sans,fontSize:"12px",marginBottom:10}}/>
+            {/* live price test */}
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <input placeholder="Live price…" value={spotInput[w.id]||""} onChange={e=>setSpotInput(p=>({...p,[w.id]:e.target.value}))}
+                style={{...inp(),width:120,fontSize:"12px",padding:"7px 10px"}}/>
+              <button onClick={()=>checkOne(w)} style={{background:`${tc}1A`,border:`1px solid ${tc}55`,color:tc,borderRadius:"7px",
+                padding:"7px 14px",fontFamily:mono,fontSize:"11px",fontWeight:700,cursor:"pointer",letterSpacing:"0.06em"}}>CHECK</button>
+              {w.fired&&(<span style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
+                <span style={{fontFamily:mono,fontSize:"10px",fontWeight:700,color:tc}}>⚡ TRIGGERED</span>
+                <button onClick={()=>{up(w.id,"fired",false);onChange(watch.map(x=>x.id===w.id?{...x,fired:false,firedAt:null}:x));}}
+                  style={{background:"transparent",border:`1px solid ${C.border}`,color:C.dim,borderRadius:"5px",padding:"3px 8px",fontFamily:mono,fontSize:"9px",cursor:"pointer"}}>RESET</button></span>)}
+            </div>
+            <div style={{marginTop:8,fontFamily:sans,fontSize:"11px",color:C.muted,lineHeight:1.4}}>
+              <span style={{fontFamily:mono,fontSize:"9px",color:`${tc}AA`,letterSpacing:"0.06em"}}>WHEN → </span>
+              {w.triggerType==="break_above"?`Price breaks above ${w.price||"—"} → momentum long signal. Buyers in control.`
+                :w.triggerType==="break_below"?`Price breaks below ${w.price||"—"} → momentum short signal. Sellers in control.`
+                :w.triggerType==="reject_at"?`Price taps ${w.price||"—"} and rejects → fade / reversal setup forming.`
+                :`Price reclaims ${w.price||"—"} after losing it → trap reversal, bias flips back.`}</div>
+          </div>);})}
+      </div>
+    )}
+    <div style={{marginTop:16,padding:"11px 13px",background:`${C.amber}0A`,border:`1px solid ${C.amber}22`,borderRadius:"9px",
+      fontFamily:sans,fontSize:"11px",color:C.muted,lineHeight:1.6}}>
+      <span style={{fontFamily:mono,fontSize:"9px",color:C.amber,letterSpacing:"0.08em"}}>NOTE · </span>
+      This app evaluates triggers against the live price you enter (it has no live market feed). Tap CHECK after updating price, or paste prices in fast during the session. Enable alerts once to get a system notification + buzz when a trigger fires.</div>
+  </div>);}
+
+/* ════ WEEKLY REVIEW ════ */
+function WeeklyReview({entries}){
+  const [weekOffset,setWeekOffset]=useState(0); // 0 = current week
+  const now=new Date();
+  const targetDate=new Date(now.getTime()-weekOffset*7*86400000);
+  const targetKey=weekKey(targetDate.getTime());
+  const weekEntries=entries.filter(e=>weekKey(e.id)===targetKey);
+
+  const closed=weekEntries.filter(e=>["win","loss","be"].includes(e.outcome));
+  const wins=closed.filter(e=>e.outcome==="win");
+  const losses=closed.filter(e=>e.outcome==="loss");
+  const winRate=closed.length?Math.round((wins.length/closed.length)*100):0;
+  const net=weekEntries.reduce((s,e)=>{const v=parseFloat(String(e.pnl).replace(/[^0-9.\-]/g,""));return s+(isNaN(v)?0:v);},0);
+  const avgQuality=weekEntries.length?(weekEntries.reduce((s,e)=>s+qualityScore(e),0)/weekEntries.length).toFixed(1):"—";
+
+  // Pattern mining: what do A-graded / wins share vs losses
+  const tally=(arr,extract)=>{const m={};arr.forEach(e=>{const k=extract(e);if(k!=null)m[k]=(m[k]||0)+1;});return m;};
+  const topOf=(m)=>{const k=Object.entries(m).sort((a,b)=>b[1]-a[1])[0];return k?`${k[0]} (${k[1]}×)`:"—";};
+
+  const aGraded=weekEntries.filter(e=>e.grade==="A"||e.grade==="B");
+  const fGraded=weekEntries.filter(e=>e.grade==="D"||e.grade==="F");
+
+  const winGex=topOf(tally(wins,e=>e.gexRegime==="neg"?"−GEX":e.gexRegime==="pos"?"+GEX":"Flip"));
+  const lossGex=topOf(tally(losses,e=>e.gexRegime==="neg"?"−GEX":e.gexRegime==="pos"?"+GEX":"Flip"));
+  const winInst=topOf(tally(wins,e=>e.instrument));
+  const lossInst=topOf(tally(losses,e=>e.instrument));
+  const winSent=topOf(tally(wins,e=>SENTIMENT.find(s=>s.v===e.sentiment)?.l));
+  const winDir=topOf(tally(wins,e=>e.bias==="long"?"LONG":"SHORT"));
+
+  const avgWinQ=wins.length?(wins.reduce((s,e)=>s+qualityScore(e),0)/wins.length).toFixed(1):"—";
+  const avgLossQ=losses.length?(losses.reduce((s,e)=>s+qualityScore(e),0)/losses.length).toFixed(1):"—";
+
+  // deviation detection: trades taken with quality < 8
+  const lowQTaken=weekEntries.filter(e=>qualityScore(e)<8 && ["win","loss","be"].includes(e.outcome));
+
+  const stat=(label,value,color)=>(
+    <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:"10px",padding:"12px 10px",textAlign:"center"}}>
+      <div style={{fontFamily:mono,fontWeight:700,fontSize:"19px",color}}>{value}</div>
+      <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.1em",marginTop:3}}>{label}</div></div>);
+
+  const compareRow=(label,winVal,lossVal)=>(
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,padding:"9px 0",borderBottom:`1px solid ${C.faint}`,alignItems:"center"}}>
+      <span style={{fontFamily:mono,fontSize:"10px",color:C.dim,letterSpacing:"0.06em"}}>{label}</span>
+      <span style={{fontFamily:sans,fontSize:"12px",color:C.green,fontWeight:600}}>{winVal}</span>
+      <span style={{fontFamily:sans,fontSize:"12px",color:C.red,fontWeight:600}}>{lossVal}</span></div>);
+
+  return(<div style={{animation:"fadeUp 0.3s ease both"}}>
+    <SectionHead n="◈" title="Weekly Review" sub="What your winners share, where you bled, and whether you stuck to the system."
+      right={<div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <button onClick={()=>setWeekOffset(o=>o+1)} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:"6px",padding:"4px 9px",fontFamily:mono,fontSize:"11px",cursor:"pointer"}}>‹</button>
+        <span style={{fontFamily:mono,fontSize:"10px",color:C.amber,minWidth:64,textAlign:"center"}}>{weekOffset===0?"THIS WK":targetKey}</span>
+        <button onClick={()=>setWeekOffset(o=>Math.max(0,o-1))} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:"6px",padding:"4px 9px",fontFamily:mono,fontSize:"11px",cursor:"pointer"}}>›</button>
+      </div>}/>
+
+    {weekEntries.length===0?(
+      <div style={{textAlign:"center",padding:"50px 20px",fontFamily:sans,fontSize:"12px",color:C.dim}}>
+        No entries logged for this week. Use ‹ › to browse other weeks.</div>
+    ):(<>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:14}}>
+        {stat("TRADES",weekEntries.length,C.blue)}
+        {stat("WIN RATE",`${winRate}%`,winRate>=50?C.green:C.amber)}
+        {stat("NET P&L",(net>=0?"+":"")+net.toFixed(1),net>=0?C.green:C.red)}
+        {stat("AVG QUALITY",avgQuality,parseFloat(avgQuality)>=8?C.green:C.amber)}
+      </div>
+
+      {/* Winners vs Losers pattern table */}
+      <div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:"12px",padding:"16px",marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:6}}>
+          <span style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.1em"}}>PATTERN</span>
+          <span style={{fontFamily:mono,fontSize:"9px",color:C.green,letterSpacing:"0.1em"}}>WINNERS</span>
+          <span style={{fontFamily:mono,fontSize:"9px",color:C.red,letterSpacing:"0.1em"}}>LOSERS</span></div>
+        {compareRow("GEX regime",winGex,lossGex)}
+        {compareRow("Instrument",winInst,lossInst)}
+        {compareRow("Avg quality",avgWinQ,avgLossQ)}
+        {compareRow("Top sentiment",winSent,"—")}
+        {compareRow("Top direction",winDir,"—")}
+      </div>
+
+      {/* Edge insight */}
+      <div style={{background:`${C.green}0A`,border:`1px solid ${C.green}33`,borderRadius:"12px",padding:"15px",marginBottom:14}}>
+        <div style={{fontFamily:mono,fontSize:"9px",color:C.green,letterSpacing:"0.14em",marginBottom:8}}>◈ YOUR EDGE THIS WEEK</div>
+        <div style={{fontFamily:sans,fontSize:"13px",color:C.textDim,lineHeight:1.6}}>
+          {wins.length>0?(<>Your winners clustered in <b style={{color:C.green}}>{winGex}</b> environments
+            {winInst!=="—"&&<> on <b style={{color:C.green}}>{winInst.split(" ")[0]}</b></>}, mostly <b style={{color:C.green}}>{winDir.split(" ")[0]}</b>.
+            Average winning-setup quality was <b style={{color:C.green}}>{avgWinQ}/10</b>. Do more of this.</>)
+            :"No winning trades logged yet this week. Focus on A+ setups only."}</div>
+      </div>
+
+      {/* Discipline check */}
+      <div style={{background:lowQTaken.length>0?`${C.red}0A`:`${C.green}0A`,border:`1px solid ${lowQTaken.length>0?C.red:C.green}33`,borderRadius:"12px",padding:"15px",marginBottom:14}}>
+        <div style={{fontFamily:mono,fontSize:"9px",color:lowQTaken.length>0?C.red:C.green,letterSpacing:"0.14em",marginBottom:8}}>◈ DISCIPLINE CHECK</div>
+        <div style={{fontFamily:sans,fontSize:"13px",color:C.textDim,lineHeight:1.6}}>
+          {lowQTaken.length>0?(<>You took <b style={{color:C.red}}>{lowQTaken.length}</b> trade{lowQTaken.length>1?"s":""} with a quality score below 8 (your "TAKE IT" threshold).
+            {avgLossQ!=="—"&&parseFloat(avgLossQ)<parseFloat(avgWinQ)&&<> Your losers averaged <b style={{color:C.red}}>{avgLossQ}/10</b> vs winners at <b style={{color:C.green}}>{avgWinQ}/10</b> — the score is telling you the truth.</>}
+            {" "}These are the trades to cut.</>)
+            :<>Every closed trade this week met your quality threshold of 8+. <b style={{color:C.green}}>Clean discipline.</b> Protect this.</>}</div>
+      </div>
+
+      {/* Reflections roll-up */}
+      <div style={{marginBottom:8}}>
+        <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.12em",marginBottom:10}}>REFLECTIONS THIS WEEK</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {weekEntries.filter(e=>e.reflection).map(e=>(
+            <div key={e.id} style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:"9px",padding:"11px 13px"}}>
+              <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:5}}>
+                <span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:instColor(e.instrument)}}>{e.instrument}</span>
+                {e.grade&&<span style={{fontFamily:mono,fontSize:"10px",fontWeight:700,color:e.grade==="A"?C.green:e.grade==="B"?C.blue:e.grade==="C"?C.amber:C.red}}>{e.grade}</span>}
+                <span style={{fontFamily:mono,fontSize:"9px",color:C.dim,marginLeft:"auto"}}>{fmtDate(e.id)}</span></div>
+              <p style={{fontFamily:sans,fontSize:"12px",color:C.muted,lineHeight:1.5}}>{e.reflection}</p></div>))}
+          {weekEntries.filter(e=>e.reflection).length===0&&(
+            <div style={{fontFamily:sans,fontSize:"12px",color:C.dim,textAlign:"center",padding:"16px"}}>No written reflections this week.</div>)}
+        </div>
+      </div>
+    </>)}
+  </div>);}
+
+/* ════ JOURNAL CARD ════ */
+function JournalCard({entry,onOpen,onDelete}){
+  const ic=instColor(entry.instrument);
+  const oc=OUTCOME.find(o=>o.v===entry.outcome)?.color||C.muted;
+  const ol=OUTCOME.find(o=>o.v===entry.outcome)?.l||"";
+  const dirColor=entry.bias==="long"?C.green:C.red;const score=qualityScore(entry);
+  return(<div onClick={()=>onOpen(entry)} style={{background:C.panel,border:`1px solid ${C.border}`,borderLeft:`3px solid ${ic}`,borderRadius:"11px",padding:"15px 16px",cursor:"pointer"}}>
+    <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+      <span style={{fontFamily:mono,fontWeight:700,fontSize:"15px",color:ic}}>{entry.instrument}</span>
+      <span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:dirColor}}>{entry.bias==="long"?"▲ LONG":"▼ SHORT"}</span>
+      {entry.outcome&&entry.outcome!=="open"&&<span style={{fontFamily:mono,fontSize:"9px",background:`${oc}1E`,border:`1px solid ${oc}44`,color:oc,padding:"2px 7px",borderRadius:"4px"}}>{ol}</span>}
+      {entry.pnl&&<span style={{fontFamily:mono,fontSize:"12px",fontWeight:700,color:entry.pnl.trim().startsWith("-")?C.red:C.green}}>{entry.pnl}</span>}
+      <div style={{marginLeft:"auto",display:"flex",gap:9,alignItems:"center"}}>
+        <span style={{fontFamily:mono,fontSize:"10px",color:scoreVerdict(score).color}}>Q{score}</span>
+        {entry.grade&&<span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:entry.grade==="A"?C.green:entry.grade==="B"?C.blue:entry.grade==="C"?C.amber:C.red}}>{entry.grade}</span>}
+        <span style={{fontFamily:mono,fontSize:"10px",color:C.dim}}>{fmtDate(entry.id)}</span>
+        <button onClick={ev=>{ev.stopPropagation();onDelete(entry.id);}} style={{background:"transparent",border:"none",color:C.dim,cursor:"pointer",fontSize:"12px",padding:0}}>✕</button></div></div>
+    <div style={{display:"flex",gap:10,marginTop:10,flexWrap:"wrap"}}>
+      {TF_LIST.map(tf=>(<span key={tf} style={{display:"flex",gap:3,alignItems:"center"}}>
+        <span style={{fontFamily:mono,fontSize:"9px",color:C.dim}}>{tf}</span>
+        <span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:tfcColor(entry.tfc[tf])}}>{tfcLabel(entry.tfc[tf])}</span></span>))}
+      <span style={{marginLeft:"auto",fontFamily:mono,fontSize:"9px",color:gexData(entry.gexRegime)?.color}}>{entry.gexRegime==="neg"?"−GEX":entry.gexRegime==="pos"?"+GEX":"FLIP"}</span></div>
+    {entry.thesis&&<p style={{fontFamily:sans,fontSize:"12px",color:C.muted,marginTop:9,lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{entry.thesis}</p>}
+  </div>);}
+
+/* ════ STATS + DISCIPLINE ════ */
+function StatsBar({entries}){
+  const closed=entries.filter(e=>["win","loss","be"].includes(e.outcome));
+  const wins=closed.filter(e=>e.outcome==="win").length;
+  const winRate=closed.length?Math.round((wins/closed.length)*100):0;
+  const net=entries.reduce((s,e)=>{const v=parseFloat(String(e.pnl).replace(/[^0-9.\-]/g,""));return s+(isNaN(v)?0:v);},0);
+  const stats=[{label:"ENTRIES",value:entries.length,color:C.blue},{label:"CLOSED",value:closed.length,color:C.slate},
+    {label:"WIN RATE",value:`${winRate}%`,color:winRate>=50?C.green:C.amber},{label:"NET P&L",value:(net>=0?"+":"")+net.toFixed(1),color:net>=0?C.green:C.red}];
+  return(<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:16}}>
+    {stats.map(s=>(<div key={s.label} style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:"10px",padding:"11px 8px",textAlign:"center"}}>
+      <div style={{fontFamily:mono,fontWeight:700,fontSize:"18px",color:s.color}}>{s.value}</div>
+      <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.1em",marginTop:3}}>{s.label}</div></div>))}</div>);}
+/* ════ CSV IMPORT VIEW ════ */
+function ImportView({onImportTrades,onClose}){
+  const [preview,setPreview]=useState(null);
+  const [error,setError]=useState("");
+  const [selected,setSelected]=useState({});
+  const fileRef=useRef();
+
+  const handleFile=(file)=>{
+    setError("");
+    const r=new FileReader();
+    r.onload=()=>{
+      try{
+        const rows=parseCSV(r.result);
+        if(!rows.length||!("Status" in rows[0])){setError("This does not look like a TopstepX orders export. Expected columns like Status, Side, Size, ExecutePrice.");return;}
+        const result=reconstructTrades(rows);
+        if(result.trades.length===0&&!result.openTrade){setError("No completed trades found. This file may contain only cancelled or working orders.");return;}
+        const sel={};result.trades.forEach((_,i)=>{sel[i]=true;});
+        setSelected(sel);
+        setPreview(result);
+      }catch(err){setError("Could not parse this file. "+err.message);}
+    };
+    r.readAsText(file);
+  };
+
+  const doImport=()=>{
+    const chosen=preview.trades.filter((_,i)=>selected[i]).map(tradeToEntry);
+    onImportTrades(chosen);
+  };
+
+  const totalSel=preview?preview.trades.filter((_,i)=>selected[i]).length:0;
+  const totalPnl=preview?preview.trades.filter((_,i)=>selected[i]).reduce((a,t)=>a+t.pnl,0):0;
+  const reasonMap={StopLoss:"Stopped out",TakeProfit:"Hit target",Trader:"Manual",ClosePosition:"Manual"};
+
+  const Uploader=(
+    <div>
+      <div onClick={()=>{if(fileRef.current)fileRef.current.click();}} style={{border:"1px dashed "+C.border,borderRadius:"12px",padding:"40px 20px",textAlign:"center",cursor:"pointer",marginBottom:14}}>
+        <div style={{fontSize:"28px",marginBottom:10}}>{"\u2191"}</div>
+        <div style={{fontFamily:mono,fontSize:"13px",color:C.amber,letterSpacing:"0.08em",marginBottom:6}}>TAP TO SELECT CSV</div>
+        <div style={{fontFamily:sans,fontSize:"11px",color:C.muted}}>orders_export.csv from TopstepX</div>
+      </div>
+      <input ref={fileRef} type="file" accept=".csv,text/csv" style={{display:"none"}} onChange={(ev)=>{const f=ev.target.files[0];if(f)handleFile(f);}}/>
+    </div>
+  );
+
+  const Tradecard=(t,i)=>{
+    const avgEntry=t.entries.reduce((a,x)=>a+x.px*x.sz,0)/t.entries.reduce((a,x)=>a+x.sz,0);
+    const on=selected[i];
+    const win=t.pnl>=0;
+    const bc=win?C.green:C.red;
+    return (
+      <div key={i} onClick={()=>setSelected(p=>Object.assign({},p,{[i]:!p[i]}))} style={{background:C.panel,border:"1px solid "+(on?bc+"55":C.border),borderLeft:"3px solid "+bc,borderRadius:"10px",padding:"12px 14px",cursor:"pointer",opacity:on?1:0.45}}>
+        <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+          <span style={{flexShrink:0,width:18,height:18,borderRadius:"5px",border:"1.5px solid "+(on?bc:C.dim),background:on?bc:"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:mono,fontSize:"11px",color:"#0A0A0A",fontWeight:700}}>{on?"\u2713":""}</span>
+          <span style={{fontFamily:mono,fontWeight:700,fontSize:"13px",color:instColor(t.instrument)}}>{t.instrument}</span>
+          <span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:t.dir==="long"?C.green:C.red}}>{(t.dir==="long"?"\u25B2 LONG ":"\u25BC SHORT ")+t.maxSize}</span>
+          <span style={{fontFamily:mono,fontSize:"13px",fontWeight:700,color:bc,marginLeft:"auto"}}>{(win?"+":"")+t.pnl.toFixed(2)}</span>
+        </div>
+        <div style={{display:"flex",gap:12,marginTop:8,fontFamily:mono,fontSize:"10px",color:C.muted,flexWrap:"wrap"}}>
+          <span>{"entry "+avgEntry.toFixed(2)}</span>
+          <span>{t.entryTime.toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span>
+          <span style={{color:t.closeReason==="StopLoss"?C.red:t.closeReason==="TakeProfit"?C.green:C.slate}}>{reasonMap[t.closeReason]||t.closeReason||"\u2014"}</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{animation:"fadeUp 0.3s ease both"}}>
+      <SectionHead n={"\u25C8"} title={"Import Trades \u2014 TopstepX CSV"} sub={"Upload your orders export. Cancelled and rejected orders are dropped automatically. Fills are reconstructed into round-trip trades with real P&L."}/>
+      {!preview?Uploader:null}
+      {error?(<div style={{background:C.red+"0C",border:"1px solid "+C.red+"44",borderRadius:"9px",padding:"12px 14px",marginBottom:14,fontFamily:sans,fontSize:"12px",color:C.red,lineHeight:1.5}}>{error}</div>):null}
+      {preview?(
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+            <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:"10px",padding:"11px 8px",textAlign:"center"}}>
+              <div style={{fontFamily:mono,fontWeight:700,fontSize:"17px",color:C.green}}>{preview.trades.length}</div>
+              <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.08em",marginTop:3}}>TRADES</div>
+            </div>
+            <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:"10px",padding:"11px 8px",textAlign:"center"}}>
+              <div style={{fontFamily:mono,fontWeight:700,fontSize:"17px",color:C.red}}>{preview.droppedCount}</div>
+              <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.08em",marginTop:3}}>DROPPED</div>
+            </div>
+            <div style={{background:C.panel,border:"1px solid "+C.border,borderRadius:"10px",padding:"11px 8px",textAlign:"center"}}>
+              <div style={{fontFamily:mono,fontWeight:700,fontSize:"17px",color:totalPnl>=0?C.green:C.red}}>{(totalPnl>=0?"+":"")+totalPnl.toFixed(0)}</div>
+              <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.08em",marginTop:3}}>SEL. P&L</div>
+            </div>
+          </div>
+          <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.1em",marginBottom:8}}>{"REVIEW & SELECT \u2014 "+totalSel+" of "+preview.trades.length+" selected"}</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+            {preview.trades.map((t,i)=>Tradecard(t,i))}
+          </div>
+          {preview.openTrade?(
+            <div style={{background:C.blue+"0A",border:"1px solid "+C.blue+"33",borderRadius:"10px",padding:"12px 14px",marginBottom:14}}>
+              <div style={{fontFamily:mono,fontSize:"9px",color:C.blue,letterSpacing:"0.1em",marginBottom:5}}>{"\u25C8 STILL OPEN \u2014 NOT IMPORTED"}</div>
+              <div style={{fontFamily:sans,fontSize:"12px",color:C.muted,lineHeight:1.5}}>{(preview.openTrade.openContracts>0?"Long ":"Short ")+Math.abs(preview.openTrade.openContracts)+" @ "+preview.openTrade.avgOpenPx.toFixed(2)+" did not close in this file. Re-import the full session once it is flat to capture its P&L."}</div>
+            </div>
+          ):null}
+          <div style={{background:C.amber+"0A",border:"1px solid "+C.amber+"22",borderRadius:"9px",padding:"11px 13px",marginBottom:16,fontFamily:sans,fontSize:"11px",color:C.muted,lineHeight:1.6}}>
+            <span style={{fontFamily:mono,fontSize:"9px",color:C.amber}}>{"NOTE \u00B7 "}</span>
+            {"Imported trades land in your journal pre-filled with instrument, direction, entry, exit, size, P&L, and outcome. Open each to add your TFC, GEX, thesis, and reflection."}
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>{setPreview(null);setError("");}} style={{flex:"0 0 auto",padding:"13px 20px",background:"transparent",border:"1px solid "+C.border,borderRadius:"9px",color:C.muted,fontFamily:mono,fontSize:"12px",cursor:"pointer"}}>BACK</button>
+            <button onClick={doImport} disabled={totalSel===0} style={{flex:1,padding:"13px",background:totalSel?"linear-gradient(135deg, "+C.amber+", "+C.amber+"CC)":C.faint,border:"none",borderRadius:"9px",color:totalSel?"#0A0A0A":C.dim,fontFamily:mono,fontWeight:700,fontSize:"12px",letterSpacing:"0.08em",cursor:totalSel?"pointer":"default"}}>{"\u25C8 IMPORT "+totalSel+" TRADE"+(totalSel!==1?"S":"")}</button>
+          </div>
+        </div>
+      ):null}
+    </div>
+  );
+}
+
+/* ════ GEX VIEW (screenshot + manual tagging) ════ */
+function GexView({gex,onSave}){
+  const [g,setG]=useState(gex);
+  const fileRef=useRef();
+  const set=(f,v)=>setG(p=>({...p,[f]:v}));
+  const handleImg=(file)=>{const r=new FileReader();r.onload=()=>set("img",r.result);r.readAsDataURL(file);};
+  const persist=()=>onSave({...g,updated:Date.now()});
+
+  return(<div style={{animation:"fadeUp 0.3s ease both"}}>
+    <SectionHead n="◈" title="Today's GEX — SPY Regime"
+      sub="Drop in your current GEX screenshot and tag the regime + key levels. Replaces each session since gamma shifts intraday."/>
+
+    {/* Screenshot */}
+    <div onClick={()=>fileRef.current?.click()}
+      style={{border:`1px dashed ${C.border}`,borderRadius:"12px",padding:g.img?"8px":"34px 20px",textAlign:"center",cursor:"pointer",marginBottom:14,overflow:"hidden"}}>
+      {g.img?(<img src={g.img} alt="GEX" style={{maxWidth:"100%",borderRadius:"8px",display:"block"}}/>)
+        :(<><div style={{fontSize:"24px",marginBottom:8}}>↑</div>
+          <div style={{fontFamily:mono,fontSize:"12px",color:C.amber,letterSpacing:"0.08em"}}>TAP TO ADD GEX SCREENSHOT</div></>)}
+    </div>
+    {g.img&&(<button onClick={()=>set("img",null)} style={{width:"100%",padding:"8px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:"7px",color:C.dim,fontFamily:mono,fontSize:"10px",cursor:"pointer",marginBottom:14}}>REMOVE IMAGE</button>)}
+    <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)handleImg(f);}}/>
+
+    {/* Regime */}
+    <div style={{marginBottom:14}}>
+      <GexPanel value={g.regime} onChange={v=>set("regime",v)}/>
+    </div>
+
+    {/* Levels */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+      <Field label="Call Wall"><input value={g.callWall} onChange={e=>set("callWall",e.target.value)} placeholder="resist" style={inp(C.red)}/></Field>
+      <Field label="Put Wall"><input value={g.putWall} onChange={e=>set("putWall",e.target.value)} placeholder="support" style={inp(C.green)}/></Field>
+      <Field label="Flip"><input value={g.flip} onChange={e=>set("flip",e.target.value)} placeholder="inflection" style={inp(C.amber)}/></Field>
+    </div>
+    <Field label="GEX Note" full><textarea value={g.note} onChange={e=>set("note",e.target.value)} rows={2}
+      placeholder="What the gamma picture is telling you today — pin risk, squeeze fuel, key battle zone…"
+      style={{...inp(),fontFamily:sans,fontSize:"13px",lineHeight:1.6,resize:"vertical",marginBottom:16}}/></Field>
+
+    <button onClick={persist} style={{width:"100%",padding:"13px",background:`linear-gradient(135deg, ${C.amber}, ${C.amber}CC)`,border:"none",borderRadius:"9px",color:"#0A0A0A",fontFamily:mono,fontWeight:700,fontSize:"12px",letterSpacing:"0.1em",cursor:"pointer"}}>◈ SAVE TODAY'S GEX</button>
+    {g.updated&&(<div style={{textAlign:"center",marginTop:10,fontFamily:mono,fontSize:"9px",color:C.dim}}>Last updated {new Date(g.updated).toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div>)}
+  </div>);}
+
+function DisciplinePanel(){
+  return(<div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:"12px",padding:"16px",marginBottom:16}}>
+    <div style={{fontFamily:mono,fontSize:"9px",color:C.red,letterSpacing:"0.18em",marginBottom:12}}>◈ CIRCUIT BREAKERS</div>
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {CIRCUIT_BREAKERS.map((b,i)=>(<div key={i} style={{display:"flex",gap:12,alignItems:"baseline",paddingBottom:8,borderBottom:i<CIRCUIT_BREAKERS.length-1?`1px solid ${C.faint}`:"none"}}>
+        <span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:C.red,minWidth:130,flexShrink:0}}>{b.trigger}</span>
+        <span style={{fontFamily:sans,fontSize:"12px",color:C.muted,lineHeight:1.4}}>{b.rule}</span></div>))}</div>
+    <div style={{marginTop:14,padding:"10px 12px",background:`${C.gold}0C`,border:`1px solid ${C.gold}33`,borderRadius:"8px"}}>
+      <div style={{fontFamily:mono,fontSize:"10px",fontWeight:700,color:C.gold,letterSpacing:"0.06em",textAlign:"center"}}>ONE SETUP · ONE SYSTEM · NO EXCEPTIONS</div>
+      <div style={{fontFamily:sans,fontSize:"11px",color:C.muted,textAlign:"center",marginTop:5}}>If it's not clear, it is not there. Wait for the A+ trade.</div></div></div>);}
+
+/* ════ SETTINGS ════ */
+function SettingsView({settings,onSave,onClose,onExport,onImport,onOpenImport}){
+  const [s,setS]=useState(settings);const set=(f,v)=>setS(p=>({...p,[f]:v}));
+  const fileRef=useRef();
+  return(<div style={{animation:"fadeUp 0.3s ease both"}}>
+    <SectionHead n="◈" title="Settings" sub="Position rules drive the size calculator. Back up or move your journal with export/import."/>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+      <Field label="Risk per Trade ($)"><input value={s.riskPerTrade} onChange={e=>set("riskPerTrade",e.target.value)} placeholder="250" style={inp(C.amber)}/></Field>
+      <Field label="Max Daily Loss ($)"><input value={s.maxDailyLoss} onChange={e=>set("maxDailyLoss",e.target.value)} placeholder="1000" style={inp(C.red)}/></Field>
+      <Field label="Account Name / ID" full><input value={s.account} onChange={e=>set("account",e.target.value)} placeholder="optional" style={inp()}/></Field></div>
+    <div style={{marginBottom:16}}>
+      <button onClick={onOpenImport} style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${C.purple}55`,borderRadius:"8px",color:C.purple,fontFamily:mono,fontSize:"11px",cursor:"pointer",letterSpacing:"0.06em"}}>↑ IMPORT TRADES FROM TOPSTEPX CSV</button>
+    </div>
+    <div style={{display:"flex",gap:10,marginBottom:20}}>
+      <button onClick={onExport} style={{flex:1,padding:"11px",background:"transparent",border:`1px solid ${C.blue}55`,borderRadius:"8px",color:C.blue,fontFamily:mono,fontSize:"11px",cursor:"pointer",letterSpacing:"0.06em"}}>↓ EXPORT JOURNAL</button>
+      <button onClick={()=>fileRef.current?.click()} style={{flex:1,padding:"11px",background:"transparent",border:`1px solid ${C.green}55`,borderRadius:"8px",color:C.green,fontFamily:mono,fontSize:"11px",cursor:"pointer",letterSpacing:"0.06em"}}>↑ IMPORT JOURNAL</button>
+      <input ref={fileRef} type="file" accept="application/json" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=()=>onImport(r.result);r.readAsText(f);}}}/></div>
+    <div style={{display:"flex",gap:10}}>
+      <button onClick={onClose} style={{flex:"0 0 auto",padding:"13px 20px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:"9px",color:C.muted,fontFamily:mono,fontSize:"12px",cursor:"pointer"}}>CANCEL</button>
+      <button onClick={()=>onSave(s)} style={{flex:1,padding:"13px",background:`linear-gradient(135deg, ${C.amber}, ${C.amber}CC)`,border:"none",borderRadius:"9px",color:"#0A0A0A",fontFamily:mono,fontWeight:700,fontSize:"12px",letterSpacing:"0.1em",cursor:"pointer"}}>◈ SAVE SETTINGS</button></div>
+  </div>);}
+
+/* ════ MAIN APP ════ */
+function StratOS(){
+  const [tab,setTab]=useState("home");       // home | watch | review | settings
+  const [view,setView]=useState("list");     // list | form  (within home)
+  const [entries,setEntries]=useState([]);
+  const [watch,setWatch]=useState([]);
+  const [editing,setEditing]=useState(null);
+  const [isEdit,setIsEdit]=useState(false);
+  const [filter,setFilter]=useState("ALL");
+  const [settings,setSettings]=useState(loadSettings());
+  const [gex,setGex]=useState(loadGex());
+  const [clock,setClock]=useState(new Date());
+  const [toast,setToast]=useState("");
+
+  useEffect(()=>{const t=setInterval(()=>setClock(new Date()),1000);return()=>clearInterval(t);},[]);
+  useEffect(()=>{setEntries(loadEntries());setWatch(loadWatch());setGex(loadGex());},[]);
+  const flash=m=>{setToast(m);setTimeout(()=>setToast(""),2200);};
+
+  const startNew=()=>{setEditing(blankEntry());setIsEdit(false);setView("form");setTab("home");};
+  const openEntry=e=>{setEditing(e);setIsEdit(true);setView("form");setTab("home");};
+  const handleSave=e=>{const arr=[e,...entries.filter(x=>x.id!==e.id)].sort((a,b)=>b.id-a.id);setEntries(arr);saveEntries(arr);setView("list");setEditing(null);flash("Saved to journal");};
+  const handleDelete=id=>{const arr=entries.filter(e=>e.id!==id);setEntries(arr);saveEntries(arr);};
+  const handleWatch=arr=>{setWatch(arr);saveWatch(arr);};
+  const handleSettings=s=>{setSettings(s);saveSettings(s);setTab("home");flash("Settings saved");};
+  const handleGex=g=>{setGex(g);saveGex(g);flash("GEX saved");};
+  const handleImportTrades=(newEntries)=>{
+    const arr=[...newEntries,...entries].sort((a,b)=>b.id-a.id);
+    setEntries(arr);saveEntries(arr);setTab("home");setView("list");
+    flash(`Imported ${newEntries.length} trade${newEntries.length!==1?"s":""}`);
+  };
+  const handleExport=()=>{const data={entries,watch,settings,exported:Date.now()};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);const a=document.createElement("a");
+    a.href=url;a.download=`stratos-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);flash("Journal exported");};
+  const handleImport=(txt)=>{try{const d=JSON.parse(txt);
+    if(d.entries){setEntries(d.entries);saveEntries(d.entries);}
+    if(d.watch){setWatch(d.watch);saveWatch(d.watch);}
+    if(d.settings){setSettings(d.settings);saveSettings(d.settings);}
+    flash("Journal imported");}catch(_){flash("Import failed — invalid file");}};
+
+  const filtered=filter==="ALL"?entries:entries.filter(e=>e.instrument===filter);
+  const firedCount=watch.filter(w=>w.fired).length;
+
+  const TABS=[{id:"home",label:"Journal",icon:"◧"},{id:"watch",label:"Watch",icon:"◉"},{id:"gex",label:"GEX",icon:"◢"},{id:"review",label:"Review",icon:"◈"},{id:"settings",label:"More",icon:"⚙"}];
+
+  return(<div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:sans,maxWidth:760,margin:"0 auto",
+    padding:"max(16px, env(safe-area-inset-top)) 14px calc(80px + env(safe-area-inset-bottom))"}}>
+
+    {/* Header */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
+      <div><div style={{fontFamily:mono,fontSize:"9px",color:C.amber,letterSpacing:"0.22em",marginBottom:5}}>◈ STRAT OS</div>
+        <h1 style={{fontFamily:sans,fontWeight:700,fontSize:"21px",color:"#F3F6FA",letterSpacing:"-0.02em",lineHeight:1}}>
+          {view==="form"?(isEdit?"Edit Brief":"New Brief"):view==="import"?"Import Trades":tab==="watch"?"Watchlist":tab==="gex"?"Today's GEX":tab==="review"?"Weekly Review":tab==="settings"?"Settings":"Trading Platform"}</h1>
+        <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,marginTop:4,letterSpacing:"0.06em"}}>NQ · ES · SPY · QQQ · STRAT · GEX · TFC</div></div>
+      <div style={{textAlign:"right"}}>
+        <div style={{fontFamily:mono,fontSize:"15px",color:C.muted}}>{clock.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}</div>
+        <div style={{display:"flex",gap:5,alignItems:"center",justifyContent:"flex-end",marginTop:3}}>
+          <span style={{width:5,height:5,borderRadius:"50%",background:C.green,animation:"pulse 2s infinite"}}/>
+          <span style={{fontFamily:mono,fontSize:"9px",color:`${C.green}55`}}>OFFLINE-READY</span></div></div>
+    </div>
+
+    {/* HOME */}
+    {tab==="home"&&view==="list"&&(<div style={{animation:"fadeUp 0.3s ease both"}}>
+      <StatsBar entries={entries}/>
+      <DisciplinePanel/>
+      <div style={{display:"flex",gap:7,marginBottom:16,flexWrap:"wrap"}}>
+        <Pill color={C.amber} active={filter==="ALL"} onClick={()=>setFilter("ALL")}>ALL</Pill>
+        {INSTRUMENTS.map(i=><Pill key={i.id} color={i.color} active={filter===i.id} onClick={()=>setFilter(i.id)}>{i.id}</Pill>)}</div>
+      <div style={{display:"flex",gap:10,marginBottom:20}}>
+        <button onClick={startNew} style={{flex:1,padding:"15px",background:`linear-gradient(135deg, ${C.amber}, ${C.amber}CC)`,border:"none",borderRadius:"12px",
+          color:"#0A0A0A",fontFamily:mono,fontWeight:700,fontSize:"13px",letterSpacing:"0.08em",cursor:"pointer",boxShadow:`0 4px 20px ${C.amber}33`}}>◈ NEW BRIEF</button>
+        <button onClick={()=>{setView("import");}} style={{flex:"0 0 auto",padding:"15px 18px",background:"transparent",border:`1px solid ${C.blue}55`,borderRadius:"12px",
+          color:C.blue,fontFamily:mono,fontWeight:700,fontSize:"12px",letterSpacing:"0.06em",cursor:"pointer"}}>↑ IMPORT CSV</button>
+      </div>
+      {filtered.length===0?(<div style={{textAlign:"center",padding:"50px 20px"}}>
+        <div style={{fontFamily:mono,fontSize:"12px",color:C.muted,marginBottom:6}}>No entries yet</div>
+        <div style={{fontFamily:sans,fontSize:"12px",color:C.dim}}>Start your first brief above. Everything you log is saved and compounds into your edge.</div></div>
+      ):(<div style={{display:"flex",flexDirection:"column",gap:11}}>
+        {filtered.map(e=><JournalCard key={e.id} entry={e} onOpen={openEntry} onDelete={handleDelete}/>)}</div>)}
+    </div>)}
+
+    {tab==="home"&&view==="form"&&editing&&(<div style={{animation:"fadeUp 0.3s ease both"}}>
+      <EntryForm initial={editing} settings={settings} isEdit={isEdit} onSave={handleSave} onCancel={()=>{setView("list");setEditing(null);}}/></div>)}
+
+    {/* IMPORT */}
+    {view==="import"&&<ImportView onImportTrades={handleImportTrades} onClose={()=>{setView("list");setTab("home");}}/>}
+
+    {/* WATCHLIST */}
+    {tab==="watch"&&view!=="import"&&<WatchlistView watch={watch} onChange={handleWatch}/>}
+
+    {/* GEX */}
+    {tab==="gex"&&view!=="import"&&<GexView gex={gex} onSave={handleGex}/>}
+
+    {/* REVIEW */}
+    {tab==="review"&&view!=="import"&&<WeeklyReview entries={entries}/>}
+
+    {/* SETTINGS */}
+    {tab==="settings"&&view!=="import"&&<SettingsView settings={settings} onSave={handleSettings} onClose={()=>setTab("home")} onExport={handleExport} onImport={handleImport} onOpenImport={()=>setView("import")}/>}
+
+    {/* Toast */}
+    {toast&&(<div style={{position:"fixed",bottom:"calc(90px + env(safe-area-inset-bottom))",left:"50%",transform:"translateX(-50%)",
+      background:C.panel2,border:`1px solid ${C.amber}55`,color:C.amber,fontFamily:mono,fontSize:"12px",padding:"10px 18px",
+      borderRadius:"999px",zIndex:50,boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>{toast}</div>)}
+
+    {/* Bottom Tab Bar */}
+    {view!=="form"&&(<div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:40,
+      background:`${C.panel}F2`,borderTop:`1px solid ${C.border}`,backdropFilter:"blur(12px)",
+      padding:"8px 12px calc(8px + env(safe-area-inset-bottom))",display:"flex",justifyContent:"space-around",maxWidth:760,margin:"0 auto"}}>
+      {TABS.map(t=>(<button key={t.id} onClick={()=>{setTab(t.id);setView("list");}} style={{background:"transparent",border:"none",cursor:"pointer",
+        display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"4px 14px",position:"relative"}}>
+        <span style={{fontSize:"18px",color:tab===t.id?C.amber:C.dim,lineHeight:1}}>{t.icon}</span>
+        <span style={{fontFamily:mono,fontSize:"9px",letterSpacing:"0.04em",color:tab===t.id?C.amber:C.dim}}>{t.label}</span>
+        {t.id==="watch"&&firedCount>0&&(<span style={{position:"absolute",top:0,right:6,width:14,height:14,borderRadius:"50%",
+          background:C.red,color:"#fff",fontFamily:mono,fontSize:"8px",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{firedCount}</span>)}
+      </button>))}
+    </div>)}
+  </div>);}
+
+/* ════ INLINE MANIFEST (no external file needed) ════ */
+try{
+  const manifest={
+    name:"STRAT OS — Trading Platform",
+    short_name:"STRAT OS",
+    description:"The Strat · GEX · TFC · Battle Map · Journal · Watchlist",
+    start_url:".",
+    scope:".",
+    display:"standalone",
+    orientation:"portrait",
+    background_color:"#08090C",
+    theme_color:"#08090C",
+    icons:[]
+  };
+  const blob=new Blob([JSON.stringify(manifest)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("link");
+  link.rel="manifest"; link.href=url;
+  document.head.appendChild(link);
+}catch(_){}
+
+/* ════ MOUNT ════ */
+ReactDOM.createRoot(document.getElementById("root")).render(<StratOS/>);
+if (window.__stratosBootTimer) clearTimeout(window.__stratosBootTimer);
+
+/* Service worker only registers when served over http(s) — silently skipped
+   when opened as a local file (file://), which still works perfectly fine
+   without it since all data lives in localStorage. */
+if("serviceWorker" in navigator && location.protocol.startsWith("http")){
+  window.addEventListener("load",()=>{
+    try{
+      const swCode = `
+        const CACHE="stratos-v1";
+        self.addEventListener("install",e=>self.skipWaiting());
+        self.addEventListener("activate",e=>self.clients.claim());
+        self.addEventListener("fetch",e=>{});
+      `;
+      const swBlob=new Blob([swCode],{type:"application/javascript"});
+      const swUrl=URL.createObjectURL(swBlob);
+      navigator.serviceWorker.register(swUrl).catch(()=>{});
+    }catch(_){}
+  });
+}
+</script>
+</body>
+</html>
