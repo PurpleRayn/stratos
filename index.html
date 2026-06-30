@@ -1059,14 +1059,20 @@ if("serviceWorker" in navigator && location.protocol.startsWith("http")){
         console.error("STRAT OS compile error:", err);
       }
     }
-    // Wait until React, ReactDOM, and Babel have all loaded from their CDN scripts
+    // Wait until React, ReactDOM, and Babel have all loaded from their CDN scripts.
+    // 600 attempts x 50ms = up to 30 seconds — generous enough for slow connections
+    // since babel.min.js in particular is a multi-megabyte file on first load.
     function waitForLibs(attempt) {
       attempt = attempt || 0;
       if (window.React && window.ReactDOM && window.Babel) {
         boot();
-      } else if (attempt < 100) {
+      } else if (attempt < 600) {
         setTimeout(function () { waitForLibs(attempt + 1); }, 50);
       } else {
+        var missing = [];
+        if (!window.React) missing.push("React");
+        if (!window.ReactDOM) missing.push("ReactDOM");
+        if (!window.Babel) missing.push("Babel");
         var root = document.getElementById("root");
         if (root) {
           root.innerHTML =
@@ -1074,15 +1080,27 @@ if("serviceWorker" in navigator && location.protocol.startsWith("http")){
             'background:#08090C;color:#E6EBF2;font-family:-apple-system,sans-serif;padding:32px;text-align:center;">' +
             '<div><div style="font-size:13px;letter-spacing:0.15em;color:#F5A623;margin-bottom:14px;">' +
             '\u25C8 STRAT OS COULD NOT LOAD</div>' +
-            '<div style="font-size:13px;color:#8B98AC;line-height:1.6;max-width:340px;">' +
-            'React, ReactDOM, or Babel never finished loading from the CDN. Check your internet ' +
-            'connection and reload.</div>' +
+            '<div style="font-size:13px;color:#8B98AC;line-height:1.6;max-width:360px;">' +
+            'Still missing after 30 seconds: <b style="color:#E5484D;">' + missing.join(", ") + '</b>. ' +
+            'This usually means a slow or interrupted connection to unpkg.com. Check your internet ' +
+            'and reload.</div>' +
             '<div style="margin-top:18px;"><button onclick="location.reload()" style="background:#F5A623;' +
             'color:#0A0A0A;border:none;border-radius:8px;padding:10px 20px;font-weight:700;' +
             'font-family:monospace;font-size:12px;cursor:pointer;">RELOAD</button></div></div></div>';
         }
       }
     }
+    // Show a lightweight "loading" indicator immediately so the screen never
+    // looks frozen/blank while libraries are still downloading.
+    (function showLoading(){
+      var root = document.getElementById("root");
+      if (root && root.children.length === 0) {
+        root.innerHTML =
+          '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+          'background:#08090C;color:#566173;font-family:monospace;font-size:11px;letter-spacing:0.1em;">' +
+          '\u25C8 LOADING STRAT OS\u2026</div>';
+      }
+    })();
     waitForLibs();
   })();
 </script>
