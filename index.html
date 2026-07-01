@@ -146,6 +146,8 @@ const loadEntries=()=>lsGet("entries",[]).sort((a,b)=>b.id-a.id);
 const saveEntries=(arr)=>lsSet("entries",arr);
 const loadWatch=()=>lsGet("watchlist",[]);
 const saveWatch=(arr)=>lsSet("watchlist",arr);
+const loadCalendar=()=>lsGet("calendar",[]);
+const saveCalendar=(arr)=>lsSet("calendar",arr);
 const loadSettings=()=>{
   const s=lsGet("settings",{riskPerTrade:"250",maxDailyLoss:"1000",account:""});
   if(!s.circuitBreakers||!s.circuitBreakers.length) s.circuitBreakers=DEFAULT_CIRCUIT_BREAKERS;
@@ -165,6 +167,7 @@ const weekKey=ts=>{const d=new Date(ts);const onejan=new Date(d.getFullYear(),0,
 
 const blankEntry=()=>({id:Date.now(),instrument:"NQ",
   tfc:{"4H":"1",D:"1",W:"1",M:"1",Q:"1"},opens:{"4H":"at",D:"at",W:"at",M:"at",Q:"at"},
+  atrDaily:"",dailyOpenPrice:"",chartSignal:"",
   gexRegime:"neg",gexCallWall:"",gexPutWall:"",gexFlip:"",spotPrice:"",
   keyLevels:[],bias:"long",thesis:"",setupSteps:[false,false,false,false,false,false],
   checklist:[false,false,false,false,false,false],
@@ -257,6 +260,45 @@ const TRIGGER_TYPES=[
   {v:"reject_at",l:"Reject AT",color:C.amber},
   {v:"reclaim",l:"Reclaim",color:C.blue}];
 
+/* ════ ECONOMIC CALENDAR ════
+   ForexFactory-style impact folders. Manually updated weekly — no live feed —
+   but structured so a real API can be dropped in later without changing the UI. */
+const IMPACT_LEVELS=[
+  {v:"high",l:"High",color:"#E5484D",icon:"🔴"},
+  {v:"medium",l:"Medium",color:"#F5A623",icon:"🟠"},
+  {v:"low",l:"Low",color:"#F5D623",icon:"🟡"},
+  {v:"holiday",l:"Holiday / Non-Econ",color:"#8B98AC",icon:"⚪"},
+];
+const CURRENCIES=["USD","EUR","GBP","JPY","CAD","AUD","CHF","CNY"];
+const COMMON_EVENTS=[
+  {title:"Nonfarm Payrolls (NFP)",impact:"high",currency:"USD"},
+  {title:"CPI m/m",impact:"high",currency:"USD"},
+  {title:"Core CPI m/m",impact:"high",currency:"USD"},
+  {title:"FOMC Statement",impact:"high",currency:"USD"},
+  {title:"FOMC Press Conference",impact:"high",currency:"USD"},
+  {title:"Fed Funds Rate",impact:"high",currency:"USD"},
+  {title:"Powell Speaks",impact:"high",currency:"USD"},
+  {title:"PPI m/m",impact:"medium",currency:"USD"},
+  {title:"Retail Sales m/m",impact:"medium",currency:"USD"},
+  {title:"Unemployment Claims",impact:"medium",currency:"USD"},
+  {title:"ISM Manufacturing PMI",impact:"medium",currency:"USD"},
+  {title:"GDP q/q",impact:"high",currency:"USD"},
+  {title:"PCE Price Index m/m",impact:"high",currency:"USD"},
+  {title:"Treasury Auction",impact:"low",currency:"USD"},
+];
+const blankEvent=()=>({id:Date.now()+Math.random(),date:"",time:"",currency:"USD",impact:"high",
+  title:"",forecast:"",previous:"",actual:"",notes:""});
+function weekRangeLabel(offset=0){
+  const now=new Date();
+  const day=now.getDay(); // 0=Sun
+  const diffToMonday=day===0?-6:1-day;
+  const monday=new Date(now); monday.setDate(now.getDate()+diffToMonday+offset*7);
+  const sunday=new Date(monday); sunday.setDate(monday.getDate()+6);
+  const fmt=(d)=>d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  return {label:`${fmt(monday)} – ${fmt(sunday)}`,start:monday,end:sunday};
+}
+function isSameDate(d1,d2){return d1.toDateString()===d2.toDateString();}
+
 function qualityScore(e){
   const checks=e.checklist.filter(Boolean).length;
   const steps=e.setupSteps.filter(Boolean).length;
@@ -270,7 +312,9 @@ function scoreVerdict(s){
 
 /* ════ AUTO BIAS INDICATOR ════
    Computes a directional read purely from entered TFC, opens, GEX regime,
-   and battle-map level ownership — no manual sentiment input. */
+   and battle-map level ownership — no manual sentiment input. Also factors in
+   how much of the day's ATR is already used, since a stretched day changes
+   the real probability of continuation vs exhaustion/reversal. */
 function computeBias(e){
   let tfcScore=0,aboveCount=0,belowCount=0,bullTF=0,bearTF=0;
   TF_LIST.forEach(tf=>{
@@ -288,17 +332,33 @@ function computeBias(e){
   const raw=tfcScore+levelScore;
   const direction=raw>1?"LONG":raw<-1?"SHORT":"NEUTRAL";
   const mag=Math.abs(raw);
+
+  // ATR-consumed: how much of today's expected range is already spent
+  const atr=parseFloat(e.atrDaily),dOpen=parseFloat(e.dailyOpenPrice),spot=parseFloat(e.spotPrice);
+  let atrUsedPct=null,atrExtended=false;
+  if(atr&&dOpen&&spot){
+    atrUsedPct=Math.round((Math.abs(spot-dOpen)/atr)*100);
+    atrExtended=atrUsedPct>=80;
+  }
+
   let confidence;
   if(e.gexRegime==="flip")confidence="LOW";
+  else if(atrExtended)confidence="LOW";
   else if(mag>=7)confidence="HIGH";
   else if(mag>=3)confidence="MEDIUM";
   else confidence="LOW";
+
   const factors=[];
   factors.push(`${bullTF}↑ / ${bearTF}↓ of 5 timeframes`);
   factors.push(`Price above open on ${aboveCount}/5, below on ${belowCount}/5`);
   if(levels.length)factors.push(`${buyerLv} buyer-defended vs ${sellerLv} seller-defended level${levels.length!==1?"s":""}`);
   factors.push(gexData(e.gexRegime)?.l.split(" — ")[0]||"GEX not set");
-  return{direction,confidence,raw,factors};
+  if(atrUsedPct!==null){
+    factors.push(atrExtended
+      ? `⚠ ${atrUsedPct}% of day's ATR already used — extension/reversal risk`
+      : `${atrUsedPct}% of day's ATR used — room to run`);
+  }
+  return{direction,confidence,raw,factors,atrUsedPct,atrExtended};
 }
 
 /* ════ AUTO-GRADE ════
@@ -408,11 +468,16 @@ function GexPanel({value,onChange}){
 
 /* ════ LEVEL BATTLE MAP ════ */
 function LevelEditor({levels,onChange}){
-  const add=()=>onChange([...levels,{id:Date.now(),label:"",price:"",owner:"buyers"}]);
+  const add=(presetLabel)=>onChange([...levels,{id:Date.now()+Math.random(),label:presetLabel||"",price:"",owner:"buyers"}]);
   const rm=id=>onChange(levels.filter(l=>l.id!==id));
   const up=(id,f,v)=>onChange(levels.map(l=>l.id===id?{...l,[f]:v}:l));
   const sorted=[...levels].filter(l=>l.price).sort((a,b)=>parseFloat(b.price)-parseFloat(a.price));
+  const PRESETS=["True Day Open","True Week Open","True Month Open","PDH","PDL"];
   return(<div>
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+      {PRESETS.map(p=>(<button key={p} onClick={()=>add(p)} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.slate,
+        borderRadius:"999px",padding:"5px 11px",fontFamily:mono,fontSize:"10px",cursor:"pointer",whiteSpace:"nowrap"}}>+ {p}</button>))}
+    </div>
     {sorted.length>0&&(<div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:"9px",padding:"12px",marginBottom:12}}>
       <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.12em",marginBottom:8}}>BATTLE LADDER (HIGH → LOW)</div>
       {sorted.map(l=>{const oc=ownerColor(l.owner);return(
@@ -439,7 +504,7 @@ function LevelEditor({levels,onChange}){
               :`${l.price} = no-man's-land. 4H close above → buyers; below → sellers.`}</div>)}
         </div>);})}
     </div>
-    <button onClick={add} style={{width:"100%",marginTop:10,padding:"9px",background:"transparent",border:`1px dashed ${C.border}`,borderRadius:"7px",color:C.dim,fontFamily:mono,fontSize:"11px",letterSpacing:"0.08em",cursor:"pointer"}}>+ ADD LEVEL</button>
+    <button onClick={()=>add()} style={{width:"100%",marginTop:10,padding:"9px",background:"transparent",border:`1px dashed ${C.border}`,borderRadius:"7px",color:C.dim,fontFamily:mono,fontSize:"11px",letterSpacing:"0.08em",cursor:"pointer"}}>+ ADD LEVEL</button>
   </div>);}
 
 /* ════ AUTO BIAS INDICATOR PANEL ════ */
@@ -455,10 +520,16 @@ function BiasIndicator({entry}){
         <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.1em"}}>CONFIDENCE</div>
         <div style={{fontFamily:mono,fontWeight:700,fontSize:"13px",color:confColor}}>{b.confidence}</div></div>
     </div>
-    <div style={{display:"flex",flexDirection:"column",gap:5}}>
+    {b.atrExtended&&(<div style={{background:`${C.red}14`,border:`1px solid ${C.red}44`,borderRadius:"7px",padding:"9px 11px",marginBottom:11}}>
+      <span style={{fontFamily:mono,fontSize:"10px",fontWeight:700,color:C.red,letterSpacing:"0.04em"}}>⚠ DAY IS EXTENDED — </span>
+      <span style={{fontFamily:sans,fontSize:"11px",color:C.textDim}}>{b.atrUsedPct}% of ATR already used. Continuation is lower-probability from here; watch for exhaustion/reversal.</span></div>)}
+    <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:entry.chartSignal?12:0}}>
       {b.factors.map((f,i)=>(<div key={i} style={{display:"flex",gap:7,fontFamily:sans,fontSize:"11px",color:C.muted,alignItems:"flex-start"}}>
         <span style={{color:dc,flexShrink:0}}>›</span>{f}</div>))}
     </div>
+    {entry.chartSignal&&(<div style={{paddingTop:11,borderTop:`1px solid ${C.faint}`,display:"flex",alignItems:"center",gap:8}}>
+      <span style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.08em"}}>YOUR CHART SAYS →</span>
+      <span style={{fontFamily:mono,fontSize:"12px",fontWeight:700,color:C.amber}}>{entry.chartSignal}</span></div>)}
   </div>);}
 
 /* ════ PERSONALIZED HABIT CHECKLIST (yes/no) ════ */
@@ -526,7 +597,14 @@ function EntryForm({initial,settings,onSave,onCancel,isEdit}){
         <Field label="Flip Level"><input value={e.gexFlip} onChange={ev=>set("gexFlip",ev.target.value)} placeholder="inflection" style={inp(C.amber)}/></Field>
         <Field label="Spot / Index"><input value={e.spotPrice} onChange={ev=>set("spotPrice",ev.target.value)} placeholder="underlying" style={inp()}/></Field></div></div>
 
-    <div><SectionHead n="03" title="Time Frame Continuity" sub="Candle type + price vs each TF open."/>
+    <div><SectionHead n="03" title="Time Frame Continuity" sub="Mirrors your TradingView TFC bar — candle type, price vs open, ATR context."/>
+      {/* Chart-mirror quick fields: ATR, Daily Open, Chart Signal */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1.4fr",gap:10,marginBottom:14}}>
+        <Field label="ATR (D)"><input value={e.atrDaily} onChange={ev=>set("atrDaily",ev.target.value)} placeholder="712.61" style={inp(C.slate)}/></Field>
+        <Field label="Daily Open"><input value={e.dailyOpenPrice} onChange={ev=>set("dailyOpenPrice",ev.target.value)} placeholder="price" style={inp(C.slate)}/></Field>
+        <Field label="Chart Signal (Actionable?)"><input value={e.chartSignal} onChange={ev=>set("chartSignal",ev.target.value)} placeholder="e.g. REV 2-2-2 ▲" style={inp(C.amber)}/></Field>
+      </div>
+
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
         {TF_LIST.map(tf=>(<div key={tf} style={{display:"flex",gap:9,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontFamily:mono,fontWeight:700,fontSize:"13px",color:tfcColor(e.tfc[tf]),width:30}}>{tf}</span>
@@ -534,12 +612,30 @@ function EntryForm({initial,settings,onSave,onCancel,isEdit}){
             {CANDLE.map(c=><option key={c.v} value={c.v}>{c.l}</option>)}</select>
           <select value={e.opens[tf]} onChange={ev=>setOpen(tf,ev.target.value)} style={{...sel(e.opens[tf]==="above"?C.green:e.opens[tf]==="below"?C.red:C.amber),width:130}}>
             {OPENS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select></div>))}</div>
-      <div style={{marginTop:12,padding:"9px 12px",background:C.bg,borderRadius:"7px",display:"flex",gap:13,flexWrap:"wrap"}}>
-        {TF_LIST.map(tf=>(<span key={tf} style={{display:"flex",gap:4,alignItems:"center"}}>
-          <span style={{fontFamily:mono,fontSize:"10px",color:C.muted}}>{tf}</span>
-          <span style={{fontFamily:mono,fontSize:"13px",fontWeight:700,color:tfcColor(e.tfc[tf])}}>{tfcLabel(e.tfc[tf])}</span>
-          <span style={{fontSize:"8px",color:e.opens[tf]==="above"?`${C.green}66`:e.opens[tf]==="below"?`${C.red}66`:`${C.amber}66`}}>
-            {e.opens[tf]==="above"?"▲":e.opens[tf]==="below"?"▼":"≈"}</span></span>))}</div></div>
+
+      {/* Chart-mirror summary bar — visually echoes the TradingView TFC widget */}
+      <div style={{marginTop:12,padding:"10px 12px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:"9px"}}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+          {e.atrDaily&&(<div style={{textAlign:"center",paddingRight:10,borderRight:`1px solid ${C.faint}`}}>
+            <div style={{fontFamily:mono,fontSize:"8px",color:C.dim}}>ATR(D)</div>
+            <div style={{fontFamily:mono,fontSize:"12px",fontWeight:700,color:C.slate}}>{e.atrDaily}</div></div>)}
+          {TF_LIST.map(tf=>{
+            const isIn=e.tfc[tf]==="1";
+            const arrow=e.opens[tf]==="above"?"▲":e.opens[tf]==="below"?"▼":"≈";
+            const arrowColor=e.opens[tf]==="above"?C.green:e.opens[tf]==="below"?C.red:C.amber;
+            return(<div key={tf} style={{textAlign:"center",minWidth:38}}>
+              <div style={{fontFamily:mono,fontSize:"8px",color:C.dim}}>{tf}</div>
+              <div style={{fontFamily:mono,fontSize:"13px",fontWeight:700,color:arrowColor}}>{arrow}</div>
+              {isIn&&<div style={{fontFamily:mono,fontSize:"8px",color:C.amber,letterSpacing:"0.05em"}}>IN</div>}
+              {!isIn&&<div style={{fontFamily:mono,fontSize:"8px",color:tfcColor(e.tfc[tf])}}>{tfcLabel(e.tfc[tf])}</div>}
+            </div>);
+          })}
+          {e.chartSignal&&(<div style={{marginLeft:"auto",paddingLeft:10,borderLeft:`1px solid ${C.faint}`}}>
+            <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,textAlign:"right"}}>SIGNAL</div>
+            <div style={{fontFamily:mono,fontSize:"12px",fontWeight:700,color:C.amber}}>{e.chartSignal}</div></div>)}
+        </div>
+      </div>
+    </div>
 
     <div><SectionHead n="04" title="Bias Indicator" sub="Auto-computed from TFC, opens, GEX regime, and your battle map — not manually picked."/>
       <BiasIndicator entry={e}/></div>
