@@ -67,8 +67,6 @@ const INSTRUMENTS=[
 const TF_LIST=["4H","D","W","M","Q"];
 const CANDLE=[{v:"1",l:"1 Inside"},{v:"2u",l:"2↑ Bull"},{v:"2d",l:"2↓ Bear"},{v:"3",l:"3 Outside"}];
 const OPENS=[{v:"above",l:"Above Open"},{v:"below",l:"Below Open"},{v:"at",l:"At Open"}];
-const SENTIMENT=[{v:"risk_on",l:"Risk On",color:"#26C281"},{v:"risk_off",l:"Risk Off",color:"#E5484D"},
-  {v:"neutral",l:"Chop / Neutral",color:"#F5A623"},{v:"squeeze",l:"Squeeze / Vol Exp",color:"#9B6DFF"}];
 const GEX_REGIME=[
   {v:"neg",l:"Negative GEX — Below Flip",color:"#26C281",mode:"AMPLIFIER",env:"TRENDING",tradeLabel:"HIGH PROBABILITY",
    desc:"Dealers fuel momentum. Your setup has FUEL — expect clean runs to opposing liquidity.",
@@ -98,11 +96,47 @@ const CHECKLIST=[
   "PDA Array (OB or FVG) at a key level?",
   "Strat entry pattern forming in real-time?",
   "GEX confirms environment (negative = green light)?"];
-const CIRCUIT_BREAKERS=[
+const DEFAULT_CIRCUIT_BREAKERS=[
   {trigger:"2 losses in a row",rule:"Close the platform. Done for the day."},
   {trigger:"$1,000 drawdown in one day",rule:"Close the platform. Done for the day."},
   {trigger:"After any single loss",rule:"15-min break. Ask: valid setup or did I deviate?"},
   {trigger:"Boredom or frustration",rule:"Close the chart. Return only when setup is crystal clear."}];
+
+/* ════ PERSONALIZED DISCIPLINE & PATTERN CHECKS ════
+   Tailored to the NQ Futures System: the 6-step setup, the pre-trade checklist,
+   the circuit breakers, and the "brutal truth" habits worth catching in the act.
+   Each is yes/no. "good" means YES is the disciplined answer; "bad" means YES
+   flags a slip. Used to feed the auto-grade and the weekly pattern mining. */
+const HABIT_CHECKS=[
+  {group:"Setup Discipline",items:[
+    {k:"waitedAllSteps",l:"Did I wait until all 6 setup steps were visible before entering?",good:true},
+    {k:"checkedGexFirst",l:"Did I check the GEX regime before touching the chart (Step 0)?",good:true},
+    {k:"sweepConfirmed",l:"Did liquidity actually sweep before I entered, not just look close?",good:true},
+    {k:"tfcAligned",l:"Was TFC genuinely aligned, or did I talk myself into it?",good:true},
+  ]},
+  {group:"Execution Control",items:[
+    {k:"respectedStop",l:"Did I respect my stop without moving it?",good:true},
+    {k:"respectedSize",l:"Did I size the position per my $ risk rule (not oversized)?",good:true},
+    {k:"tookPlannedExit",l:"Did I exit at my planned target/stop instead of improvising?",good:true},
+    {k:"movedStopAway",l:"Did I move my stop further away mid-trade?",good:false},
+    {k:"addedToLoser",l:"Did I add to a losing position outside the plan?",good:false},
+  ]},
+  {group:"Emotional / Brutal Truth",items:[
+    {k:"chasedPrice",l:"Did I chase price instead of waiting for my setup?",good:false},
+    {k:"revengeTrade",l:"Was this a revenge trade after a prior loss?",good:false},
+    {k:"boredomTrade",l:"Did boredom or impatience pull me into this?",good:false},
+    {k:"tradedOnFeeling",l:"Did I trade on a feeling rather than the checklist?",good:false},
+  ]},
+  {group:"Circuit Breaker Compliance",items:[
+    {k:"tookBreakAfterLoss",l:"If I had a loss today, did I take the 15-min break?",good:true},
+    {k:"stoppedAtTwoLosses",l:"If I hit 2 losses today, did I stop trading?",good:true},
+  ]},
+];
+const blankHabits=()=>{
+  const o={};
+  HABIT_CHECKS.forEach(g=>g.items.forEach(it=>{o[it.k]=null;}));
+  return o;
+};
 
 /* ════ STORAGE (localStorage — offline, independent) ════ */
 const PFX="stratos:";
@@ -112,7 +146,11 @@ const loadEntries=()=>lsGet("entries",[]).sort((a,b)=>b.id-a.id);
 const saveEntries=(arr)=>lsSet("entries",arr);
 const loadWatch=()=>lsGet("watchlist",[]);
 const saveWatch=(arr)=>lsSet("watchlist",arr);
-const loadSettings=()=>lsGet("settings",{riskPerTrade:"250",maxDailyLoss:"1000",account:""});
+const loadSettings=()=>{
+  const s=lsGet("settings",{riskPerTrade:"250",maxDailyLoss:"1000",account:""});
+  if(!s.circuitBreakers||!s.circuitBreakers.length) s.circuitBreakers=DEFAULT_CIRCUIT_BREAKERS;
+  return s;
+};
 const saveSettings=(s)=>lsSet("settings",s);
 
 /* ════ HELPERS ════ */
@@ -127,12 +165,11 @@ const weekKey=ts=>{const d=new Date(ts);const onejan=new Date(d.getFullYear(),0,
 
 const blankEntry=()=>({id:Date.now(),instrument:"NQ",
   tfc:{"4H":"1",D:"1",W:"1",M:"1",Q:"1"},opens:{"4H":"at",D:"at",W:"at",M:"at",Q:"at"},
-  sentiment:"neutral",gexRegime:"neg",gexCallWall:"",gexPutWall:"",gexFlip:"",
-  contractSymbol:"",contractPrice:"",contractIV:"",spotPrice:"",
+  gexRegime:"neg",gexCallWall:"",gexPutWall:"",gexFlip:"",spotPrice:"",
   keyLevels:[],bias:"long",thesis:"",setupSteps:[false,false,false,false,false,false],
   checklist:[false,false,false,false,false,false],
   entry:"",stop:"",target1:"",target2:"",size:"",outcome:"open",exitPrice:"",pnl:"",
-  execution:"",reflection:"",grade:""});
+  execution:"",reflection:"",habits:blankHabits(),grade:""});
 const blankWatch=()=>({id:Date.now(),instrument:"NQ",price:"",owner:"buyers",
   triggerType:"break_above",note:"",armed:true,fired:false,firedAt:null});
 
@@ -230,6 +267,83 @@ function scoreVerdict(s){
   if(s>=8)return{label:"TAKE IT",color:C.green};
   if(s>=6)return{label:"SKIP IT",color:C.amber};
   return{label:"WALK AWAY",color:C.red};}
+
+/* ════ AUTO BIAS INDICATOR ════
+   Computes a directional read purely from entered TFC, opens, GEX regime,
+   and battle-map level ownership — no manual sentiment input. */
+function computeBias(e){
+  let tfcScore=0,aboveCount=0,belowCount=0,bullTF=0,bearTF=0;
+  TF_LIST.forEach(tf=>{
+    const c=e.tfc[tf];
+    if(c==="2u"){tfcScore+=2;bullTF++;}
+    else if(c==="2d"){tfcScore-=2;bearTF++;}
+    const o=e.opens[tf];
+    if(o==="above"){tfcScore+=1;aboveCount++;}
+    else if(o==="below"){tfcScore-=1;belowCount++;}
+  });
+  const levels=e.keyLevels||[];
+  const buyerLv=levels.filter(l=>l.owner==="buyers"&&l.price).length;
+  const sellerLv=levels.filter(l=>l.owner==="sellers"&&l.price).length;
+  const levelScore=buyerLv-sellerLv;
+  const raw=tfcScore+levelScore;
+  const direction=raw>1?"LONG":raw<-1?"SHORT":"NEUTRAL";
+  const mag=Math.abs(raw);
+  let confidence;
+  if(e.gexRegime==="flip")confidence="LOW";
+  else if(mag>=7)confidence="HIGH";
+  else if(mag>=3)confidence="MEDIUM";
+  else confidence="LOW";
+  const factors=[];
+  factors.push(`${bullTF}↑ / ${bearTF}↓ of 5 timeframes`);
+  factors.push(`Price above open on ${aboveCount}/5, below on ${belowCount}/5`);
+  if(levels.length)factors.push(`${buyerLv} buyer-defended vs ${sellerLv} seller-defended level${levels.length!==1?"s":""}`);
+  factors.push(gexData(e.gexRegime)?.l.split(" — ")[0]||"GEX not set");
+  return{direction,confidence,raw,factors};
+}
+
+/* ════ AUTO-GRADE ════
+   Replaces manual A–F selection. Grades the trade on quality score, outcome,
+   whether the manual bias agreed with the system's computed read, and the
+   net of personalized discipline-habit answers. */
+const ALL_HABIT_ITEMS=HABIT_CHECKS.flatMap(g=>g.items);
+function computeAutoGrade(e){
+  const q=qualityScore(e);
+  const bias=computeBias(e);
+  let answered=0,disciplinePts=0;
+  ALL_HABIT_ITEMS.forEach(it=>{
+    const v=e.habits?e.habits[it.k]:null;
+    if(v===null||v===undefined)return;
+    answered++;
+    const goodBehavior=it.good?v===true:v===false;
+    disciplinePts+=goodBehavior?1:-1;
+  });
+  const disciplineRatio=answered>0?disciplinePts/answered:0;
+  const outcomeAdj=e.outcome==="win"?1.5:e.outcome==="be"?0:e.outcome==="loss"?-1:0;
+  const biasMatches=bias.direction!=="NEUTRAL"&&((e.bias==="long"&&bias.direction==="LONG")||(e.bias==="short"&&bias.direction==="SHORT"));
+  const biasAdj=bias.direction==="NEUTRAL"?0:(biasMatches?1:-1.5);
+  const disciplineAdj=disciplineRatio*2;
+  const score10=Math.max(0,Math.min(10,q*0.55+outcomeAdj+biasAdj+disciplineAdj));
+  let letter,color;
+  if(score10>=9){letter="A+";color=C.green;}
+  else if(score10>=8){letter="A";color=C.green;}
+  else if(score10>=6.5){letter="B";color=C.blue;}
+  else if(score10>=5){letter="C";color=C.amber;}
+  else if(score10>=3){letter="D";color=C.amber;}
+  else{letter="F";color=C.red;}
+  const why=[`Quality ${q}/10`];
+  if(e.outcome&&e.outcome!=="open")why.push(e.outcome.toUpperCase());
+  if(bias.direction!=="NEUTRAL")why.push(biasMatches?"bias matched system read":"bias fought system read");
+  if(answered>0)why.push(`${Math.round((disciplinePts+answered)/2)}/${answered} disciplined habits`);
+  return{letter,color,score10,why};
+}
+function gradeColor(g){
+  if(g==="A+"||g==="A")return C.green;
+  if(g==="B")return C.blue;
+  if(g==="C")return C.amber;
+  if(g==="D"||g==="F")return C.red;
+  return C.dim;
+}
+
 function sizeCalc(entry,stop,risk,instrument){
   const en=parseFloat(entry),st=parseFloat(stop),rk=parseFloat(risk);
   if(!en||!st||!rk)return null;const stopPts=Math.abs(en-st);if(!stopPts)return null;
@@ -328,6 +442,63 @@ function LevelEditor({levels,onChange}){
     <button onClick={add} style={{width:"100%",marginTop:10,padding:"9px",background:"transparent",border:`1px dashed ${C.border}`,borderRadius:"7px",color:C.dim,fontFamily:mono,fontSize:"11px",letterSpacing:"0.08em",cursor:"pointer"}}>+ ADD LEVEL</button>
   </div>);}
 
+/* ════ AUTO BIAS INDICATOR PANEL ════ */
+function BiasIndicator({entry}){
+  const b=computeBias(entry);
+  const dc=b.direction==="LONG"?C.green:b.direction==="SHORT"?C.red:C.amber;
+  const confColor=b.confidence==="HIGH"?C.green:b.confidence==="MEDIUM"?C.amber:C.dim;
+  return(<div style={{background:`${dc}0C`,border:`1px solid ${dc}33`,borderRadius:"12px",padding:"16px"}}>
+    <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:12}}>
+      <div style={{fontFamily:mono,fontWeight:700,fontSize:"26px",color:dc,letterSpacing:"0.04em"}}>
+        {b.direction==="LONG"?"▲ LONG":b.direction==="SHORT"?"▼ SHORT":"◈ NEUTRAL"}</div>
+      <div style={{marginLeft:"auto",textAlign:"right"}}>
+        <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.1em"}}>CONFIDENCE</div>
+        <div style={{fontFamily:mono,fontWeight:700,fontSize:"13px",color:confColor}}>{b.confidence}</div></div>
+    </div>
+    <div style={{display:"flex",flexDirection:"column",gap:5}}>
+      {b.factors.map((f,i)=>(<div key={i} style={{display:"flex",gap:7,fontFamily:sans,fontSize:"11px",color:C.muted,alignItems:"flex-start"}}>
+        <span style={{color:dc,flexShrink:0}}>›</span>{f}</div>))}
+    </div>
+  </div>);}
+
+/* ════ PERSONALIZED HABIT CHECKLIST (yes/no) ════ */
+function YesNoToggle({value,onChange}){
+  return(<div style={{display:"flex",gap:5,flexShrink:0}}>
+    <button onClick={()=>onChange(value===true?null:true)} style={{padding:"5px 12px",borderRadius:"6px",fontFamily:mono,fontSize:"10px",fontWeight:700,cursor:"pointer",
+      background:value===true?`${C.green}22`:"transparent",border:`1px solid ${value===true?C.green:C.border}`,color:value===true?C.green:C.dim}}>YES</button>
+    <button onClick={()=>onChange(value===false?null:false)} style={{padding:"5px 12px",borderRadius:"6px",fontFamily:mono,fontSize:"10px",fontWeight:700,cursor:"pointer",
+      background:value===false?`${C.red}22`:"transparent",border:`1px solid ${value===false?C.red:C.border}`,color:value===false?C.red:C.dim}}>NO</button>
+  </div>);}
+function HabitChecklist({habits,onChange}){
+  const setOne=(k,v)=>onChange({...habits,[k]:v});
+  return(<div style={{display:"flex",flexDirection:"column",gap:16}}>
+    {HABIT_CHECKS.map(group=>(
+      <div key={group.group}>
+        <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,letterSpacing:"0.12em",marginBottom:8,textTransform:"uppercase"}}>{group.group}</div>
+        <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:"10px",padding:"4px 12px"}}>
+          {group.items.map(it=>(
+            <div key={it.k} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 0",borderBottom:`1px solid ${C.faint}`}}>
+              <span style={{fontFamily:sans,fontSize:"12px",color:C.muted,lineHeight:1.4,flex:1}}>{it.l}</span>
+              <YesNoToggle value={habits?habits[it.k]:null} onChange={v=>setOne(it.k,v)}/>
+            </div>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>);}
+
+/* ════ AUTO-GRADE PANEL ════ */
+function AutoGradePanel({entry}){
+  const g=computeAutoGrade(entry);
+  return(<div style={{display:"flex",alignItems:"center",gap:16,background:`${g.color}10`,border:`1px solid ${g.color}44`,borderRadius:"12px",padding:"16px 18px"}}>
+    <div style={{textAlign:"center",flexShrink:0}}>
+      <div style={{fontFamily:mono,fontWeight:700,fontSize:"34px",color:g.color,lineHeight:1}}>{g.letter}</div>
+      <div style={{fontFamily:mono,fontSize:"8px",color:C.dim,letterSpacing:"0.1em",marginTop:2}}>{g.score10.toFixed(1)}/10</div></div>
+    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+      {g.why.map((w,i)=>(<div key={i} style={{fontFamily:sans,fontSize:"11px",color:C.muted}}>{w}</div>))}
+    </div>
+  </div>);}
+
 /* ════ ENTRY FORM ════ */
 function EntryForm({initial,settings,onSave,onCancel,isEdit}){
   const [e,setE]=useState(initial);
@@ -349,10 +520,11 @@ function EntryForm({initial,settings,onSave,onCancel,isEdit}){
 
     <div><SectionHead n="02" title="Step 0 — GEX Regime" sub="Before touching the chart: where is price vs the Gamma Flip? This sets your whole environment."/>
       <GexPanel value={e.gexRegime} onChange={v=>set("gexRegime",v)}/>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:12}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginTop:12}}>
         <Field label="Call Wall"><input value={e.gexCallWall} onChange={ev=>set("gexCallWall",ev.target.value)} placeholder="resist" style={inp(C.red)}/></Field>
         <Field label="Put Wall"><input value={e.gexPutWall} onChange={ev=>set("gexPutWall",ev.target.value)} placeholder="support" style={inp(C.green)}/></Field>
-        <Field label="Flip Level"><input value={e.gexFlip} onChange={ev=>set("gexFlip",ev.target.value)} placeholder="inflection" style={inp(C.amber)}/></Field></div></div>
+        <Field label="Flip Level"><input value={e.gexFlip} onChange={ev=>set("gexFlip",ev.target.value)} placeholder="inflection" style={inp(C.amber)}/></Field>
+        <Field label="Spot / Index"><input value={e.spotPrice} onChange={ev=>set("spotPrice",ev.target.value)} placeholder="underlying" style={inp()}/></Field></div></div>
 
     <div><SectionHead n="03" title="Time Frame Continuity" sub="Candle type + price vs each TF open."/>
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -369,14 +541,8 @@ function EntryForm({initial,settings,onSave,onCancel,isEdit}){
           <span style={{fontSize:"8px",color:e.opens[tf]==="above"?`${C.green}66`:e.opens[tf]==="below"?`${C.red}66`:`${C.amber}66`}}>
             {e.opens[tf]==="above"?"▲":e.opens[tf]==="below"?"▼":"≈"}</span></span>))}</div></div>
 
-    <div><SectionHead n="04" title="Sentiment & Contract"/>
-      <Field label="Market Sentiment" full><div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>
-        {SENTIMENT.map(s=><Pill key={s.v} color={s.color} active={e.sentiment===s.v} onClick={()=>set("sentiment",s.v)}>{s.l}</Pill>)}</div></Field>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Spot / Index"><input value={e.spotPrice} onChange={ev=>set("spotPrice",ev.target.value)} placeholder="underlying" style={inp()}/></Field>
-        <Field label="Contract Symbol"><input value={e.contractSymbol} onChange={ev=>set("contractSymbol",ev.target.value)} placeholder="QQQ 6/20 480C" style={inp(C.blue)}/></Field>
-        <Field label="Contract Price"><input value={e.contractPrice} onChange={ev=>set("contractPrice",ev.target.value)} placeholder="$ premium" style={inp(C.blue)}/></Field>
-        <Field label="Implied Vol"><input value={e.contractIV} onChange={ev=>set("contractIV",ev.target.value)} placeholder="% IV" style={inp(C.purple)}/></Field></div></div>
+    <div><SectionHead n="04" title="Bias Indicator" sub="Auto-computed from TFC, opens, GEX regime, and your battle map — not manually picked."/>
+      <BiasIndicator entry={e}/></div>
 
     <div><SectionHead n="05" title="Key Levels — Battle Map" sub="Where buyers/sellers defend. Auto-generates flip scenarios."/>
       <LevelEditor levels={e.keyLevels} onChange={v=>set("keyLevels",v)}/></div>
@@ -420,18 +586,23 @@ function EntryForm({initial,settings,onSave,onCancel,isEdit}){
         <Field label="Exit Price"><input value={e.exitPrice} onChange={ev=>set("exitPrice",ev.target.value)} placeholder="0.00" style={inp()}/></Field>
         <Field label="P&L ($ or R)"><input value={e.pnl} onChange={ev=>set("pnl",ev.target.value)} placeholder="+/-" style={inp(e.pnl.trim().startsWith("-")?C.red:e.pnl.trim()?C.green:C.textDim)}/></Field></div></div>
 
-    <div><SectionHead n="11" title="Execution & Reflection" sub="The three questions after every trade."/>
+    <div><SectionHead n="11" title="Execution & Reflection" sub="The questions worth asking after every trade."/>
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
-        <Field label="Q1 — Did I follow the full checklist exactly?"><textarea value={e.execution} onChange={ev=>set("execution",ev.target.value)} rows={2}
-          placeholder="Yes / No — entry discipline, did I chase, respect stop, take profit per plan…" style={{...inp(),fontFamily:sans,fontSize:"13px",lineHeight:1.6,resize:"vertical"}}/></Field>
-        <Field label="Q2 — Invalid setup or deviation? · Q3 — One thing to do better"><textarea value={e.reflection} onChange={ev=>set("reflection",ev.target.value)} rows={3}
+        <Field label="Did I follow the full checklist exactly?"><textarea value={e.execution} onChange={ev=>set("execution",ev.target.value)} rows={2}
+          placeholder="Entry discipline, did I chase, respect stop, take profit per plan…" style={{...inp(),fontFamily:sans,fontSize:"13px",lineHeight:1.6,resize:"vertical"}}/></Field>
+        <Field label="Invalid setup or deviation? One thing to do better next time."><textarea value={e.reflection} onChange={ev=>set("reflection",ev.target.value)} rows={3}
           placeholder="Lessons, emotional state, the one specific improvement for next trade…" style={{...inp(),fontFamily:sans,fontSize:"13px",lineHeight:1.6,resize:"vertical"}}/></Field>
-        <Field label="Self Grade (A–F)"><div style={{display:"flex",gap:6}}>
-          {["A","B","C","D","F"].map(g=><Pill key={g} color={g==="A"?C.green:g==="B"?C.blue:g==="C"?C.amber:C.red} active={e.grade===g} onClick={()=>set("grade",g)}>{g}</Pill>)}</div></Field></div></div>
+      </div></div>
+
+    <div><SectionHead n="12" title="Discipline & Pattern Check" sub="Tailored to your system — yes/no, tap to answer. Feeds your auto-grade and weekly pattern mining."/>
+      <HabitChecklist habits={e.habits} onChange={h=>set("habits",h)}/></div>
+
+    <div><SectionHead n="13" title="Auto-Grade" sub="Computed from quality score, outcome, bias agreement, and your discipline answers above."/>
+      <AutoGradePanel entry={e}/></div>
 
     <div style={{display:"flex",gap:10,position:"sticky",bottom:0,background:`linear-gradient(180deg, transparent, ${C.bg} 40%)`,paddingTop:16,paddingBottom:6}}>
       <button onClick={onCancel} style={{flex:"0 0 auto",padding:"13px 20px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:"9px",color:C.muted,fontFamily:mono,fontSize:"12px",cursor:"pointer"}}>CANCEL</button>
-      <button onClick={()=>onSave(e)} style={{flex:1,padding:"13px",background:`linear-gradient(135deg, ${C.amber}, ${C.amber}CC)`,border:"none",borderRadius:"9px",color:"#0A0A0A",fontFamily:mono,fontWeight:700,fontSize:"12px",letterSpacing:"0.1em",cursor:"pointer"}}>◈ {isEdit?"UPDATE":"SAVE TO JOURNAL"}</button></div>
+      <button onClick={()=>onSave({...e,grade:computeAutoGrade(e).letter})} style={{flex:1,padding:"13px",background:`linear-gradient(135deg, ${C.amber}, ${C.amber}CC)`,border:"none",borderRadius:"9px",color:"#0A0A0A",fontFamily:mono,fontWeight:700,fontSize:"12px",letterSpacing:"0.1em",cursor:"pointer"}}>◈ {isEdit?"UPDATE":"SAVE TO JOURNAL"}</button></div>
   </div>);}
 
 /* ════ WATCHLIST + TRIGGERS + ALERTS ════ */
@@ -545,14 +716,14 @@ function WeeklyReview({entries}){
   const tally=(arr,extract)=>{const m={};arr.forEach(e=>{const k=extract(e);if(k!=null)m[k]=(m[k]||0)+1;});return m;};
   const topOf=(m)=>{const k=Object.entries(m).sort((a,b)=>b[1]-a[1])[0];return k?`${k[0]} (${k[1]}×)`:"—";};
 
-  const aGraded=weekEntries.filter(e=>e.grade==="A"||e.grade==="B");
+  const aGraded=weekEntries.filter(e=>e.grade==="A+"||e.grade==="A"||e.grade==="B");
   const fGraded=weekEntries.filter(e=>e.grade==="D"||e.grade==="F");
 
   const winGex=topOf(tally(wins,e=>e.gexRegime==="neg"?"−GEX":e.gexRegime==="pos"?"+GEX":"Flip"));
   const lossGex=topOf(tally(losses,e=>e.gexRegime==="neg"?"−GEX":e.gexRegime==="pos"?"+GEX":"Flip"));
   const winInst=topOf(tally(wins,e=>e.instrument));
   const lossInst=topOf(tally(losses,e=>e.instrument));
-  const winSent=topOf(tally(wins,e=>SENTIMENT.find(s=>s.v===e.sentiment)?.l));
+  const winBiasAgree=topOf(tally(wins,e=>{const b=computeBias(e);if(b.direction==="NEUTRAL")return null;return (e.bias==="long"&&b.direction==="LONG")||(e.bias==="short"&&b.direction==="SHORT")?"Bias matched system":"Bias fought system";}));
   const winDir=topOf(tally(wins,e=>e.bias==="long"?"LONG":"SHORT"));
 
   const avgWinQ=wins.length?(wins.reduce((s,e)=>s+qualityScore(e),0)/wins.length).toFixed(1):"—";
@@ -600,7 +771,7 @@ function WeeklyReview({entries}){
         {compareRow("GEX regime",winGex,lossGex)}
         {compareRow("Instrument",winInst,lossInst)}
         {compareRow("Avg quality",avgWinQ,avgLossQ)}
-        {compareRow("Top sentiment",winSent,"—")}
+        {compareRow("Bias agreement",winBiasAgree,"—")}
         {compareRow("Top direction",winDir,"—")}
       </div>
 
@@ -632,7 +803,7 @@ function WeeklyReview({entries}){
             <div key={e.id} style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:"9px",padding:"11px 13px"}}>
               <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:5}}>
                 <span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:instColor(e.instrument)}}>{e.instrument}</span>
-                {e.grade&&<span style={{fontFamily:mono,fontSize:"10px",fontWeight:700,color:e.grade==="A"?C.green:e.grade==="B"?C.blue:e.grade==="C"?C.amber:C.red}}>{e.grade}</span>}
+                {e.grade&&<span style={{fontFamily:mono,fontSize:"10px",fontWeight:700,color:gradeColor(e.grade)}}>{e.grade}</span>}
                 <span style={{fontFamily:mono,fontSize:"9px",color:C.dim,marginLeft:"auto"}}>{fmtDate(e.id)}</span></div>
               <p style={{fontFamily:sans,fontSize:"12px",color:C.muted,lineHeight:1.5}}>{e.reflection}</p></div>))}
           {weekEntries.filter(e=>e.reflection).length===0&&(
@@ -656,7 +827,7 @@ function JournalCard({entry,onOpen,onDelete}){
       {entry.pnl&&<span style={{fontFamily:mono,fontSize:"12px",fontWeight:700,color:entry.pnl.trim().startsWith("-")?C.red:C.green}}>{entry.pnl}</span>}
       <div style={{marginLeft:"auto",display:"flex",gap:9,alignItems:"center"}}>
         <span style={{fontFamily:mono,fontSize:"10px",color:scoreVerdict(score).color}}>Q{score}</span>
-        {entry.grade&&<span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:entry.grade==="A"?C.green:entry.grade==="B"?C.blue:entry.grade==="C"?C.amber:C.red}}>{entry.grade}</span>}
+        {entry.grade&&<span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:gradeColor(entry.grade)}}>{entry.grade}</span>}
         <span style={{fontFamily:mono,fontSize:"10px",color:C.dim}}>{fmtDate(entry.id)}</span>
         <button onClick={ev=>{ev.stopPropagation();onDelete(entry.id);}} style={{background:"transparent",border:"none",color:C.dim,cursor:"pointer",fontSize:"12px",padding:0}}>✕</button></div></div>
     <div style={{display:"flex",gap:10,marginTop:10,flexWrap:"wrap"}}>
@@ -831,11 +1002,15 @@ function GexView({gex,onSave}){
     {g.updated&&(<div style={{textAlign:"center",marginTop:10,fontFamily:mono,fontSize:"9px",color:C.dim}}>Last updated {new Date(g.updated).toLocaleString("en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div>)}
   </div>);}
 
-function DisciplinePanel(){
+function DisciplinePanel({breakers,onGoToSettings}){
+  const list=breakers&&breakers.length?breakers:DEFAULT_CIRCUIT_BREAKERS;
   return(<div style={{background:C.panel,border:`1px solid ${C.border}`,borderRadius:"12px",padding:"16px",marginBottom:16}}>
-    <div style={{fontFamily:mono,fontSize:"9px",color:C.red,letterSpacing:"0.18em",marginBottom:12}}>◈ CIRCUIT BREAKERS</div>
+    <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
+      <div style={{fontFamily:mono,fontSize:"9px",color:C.red,letterSpacing:"0.18em"}}>◈ CIRCUIT BREAKERS</div>
+      {onGoToSettings&&<button onClick={onGoToSettings} style={{marginLeft:"auto",background:"transparent",border:`1px solid ${C.border}`,color:C.dim,borderRadius:"6px",padding:"3px 9px",fontFamily:mono,fontSize:"9px",cursor:"pointer",letterSpacing:"0.06em"}}>EDIT</button>}
+    </div>
     <div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {CIRCUIT_BREAKERS.map((b,i)=>(<div key={i} style={{display:"flex",gap:12,alignItems:"baseline",paddingBottom:8,borderBottom:i<CIRCUIT_BREAKERS.length-1?`1px solid ${C.faint}`:"none"}}>
+      {list.map((b,i)=>(<div key={i} style={{display:"flex",gap:12,alignItems:"baseline",paddingBottom:8,borderBottom:i<list.length-1?`1px solid ${C.faint}`:"none"}}>
         <span style={{fontFamily:mono,fontSize:"11px",fontWeight:700,color:C.red,minWidth:130,flexShrink:0}}>{b.trigger}</span>
         <span style={{fontFamily:sans,fontSize:"12px",color:C.muted,lineHeight:1.4}}>{b.rule}</span></div>))}</div>
     <div style={{marginTop:14,padding:"10px 12px",background:`${C.gold}0C`,border:`1px solid ${C.gold}33`,borderRadius:"8px"}}>
@@ -844,14 +1019,42 @@ function DisciplinePanel(){
 
 /* ════ SETTINGS ════ */
 function SettingsView({settings,onSave,onClose,onExport,onImport,onOpenImport}){
-  const [s,setS]=useState(settings);const set=(f,v)=>setS(p=>({...p,[f]:v}));
+  const [s,setS]=useState({...settings,circuitBreakers:settings.circuitBreakers&&settings.circuitBreakers.length?settings.circuitBreakers:DEFAULT_CIRCUIT_BREAKERS});
+  const set=(f,v)=>setS(p=>({...p,[f]:v}));
   const fileRef=useRef();
+  const cb=s.circuitBreakers;
+  const setCbField=(i,field,v)=>set("circuitBreakers",cb.map((b,j)=>j===i?{...b,[field]:v}:b));
+  const addCb=()=>set("circuitBreakers",[...cb,{trigger:"",rule:""}]);
+  const rmCb=(i)=>set("circuitBreakers",cb.filter((_,j)=>j!==i));
+  const resetCb=()=>set("circuitBreakers",DEFAULT_CIRCUIT_BREAKERS);
   return(<div style={{animation:"fadeUp 0.3s ease both"}}>
     <SectionHead n="◈" title="Settings" sub="Position rules drive the size calculator. Back up or move your journal with export/import."/>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
       <Field label="Risk per Trade ($)"><input value={s.riskPerTrade} onChange={e=>set("riskPerTrade",e.target.value)} placeholder="250" style={inp(C.amber)}/></Field>
       <Field label="Max Daily Loss ($)"><input value={s.maxDailyLoss} onChange={e=>set("maxDailyLoss",e.target.value)} placeholder="1000" style={inp(C.red)}/></Field>
       <Field label="Account Name / ID" full><input value={s.account} onChange={e=>set("account",e.target.value)} placeholder="optional" style={inp()}/></Field></div>
+
+    <div style={{marginBottom:20}}>
+      <SectionHead n="◈" title="Circuit Breakers" sub="Fully editable — add, edit, or remove your own trading rules."/>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+        {cb.map((b,i)=>(
+          <div key={i} style={{background:C.bg,border:`1px solid ${C.border}`,borderLeft:`3px solid ${C.red}`,borderRadius:"8px",padding:"10px"}}>
+            <div style={{display:"flex",gap:7,alignItems:"center",marginBottom:6}}>
+              <input value={b.trigger} onChange={ev=>setCbField(i,"trigger",ev.target.value)} placeholder="Trigger (e.g. 2 losses in a row)"
+                style={{...inp(C.red),fontSize:"11px",padding:"7px 9px",fontWeight:700}}/>
+              <button onClick={()=>rmCb(i)} style={{flexShrink:0,background:"transparent",border:`1px solid ${C.faint}`,color:C.dim,borderRadius:"6px",padding:"6px 10px",cursor:"pointer",fontFamily:mono,fontSize:"11px"}}>✕</button>
+            </div>
+            <input value={b.rule} onChange={ev=>setCbField(i,"rule",ev.target.value)} placeholder="Rule (what you do when it fires)"
+              style={{...inp(C.muted),fontSize:"12px",padding:"7px 9px",fontFamily:sans}}/>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={addCb} style={{flex:1,padding:"9px",background:"transparent",border:`1px dashed ${C.border}`,borderRadius:"7px",color:C.dim,fontFamily:mono,fontSize:"11px",letterSpacing:"0.08em",cursor:"pointer"}}>+ ADD BREAKER</button>
+        <button onClick={resetCb} style={{flex:"0 0 auto",padding:"9px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:"7px",color:C.dim,fontFamily:mono,fontSize:"11px",cursor:"pointer"}}>RESET</button>
+      </div>
+    </div>
+
     <div style={{marginBottom:16}}>
       <button onClick={onOpenImport} style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${C.purple}55`,borderRadius:"8px",color:C.purple,fontFamily:mono,fontSize:"11px",cursor:"pointer",letterSpacing:"0.06em"}}>↑ IMPORT TRADES FROM TOPSTEPX CSV</button>
     </div>
@@ -916,8 +1119,7 @@ function StratOS(){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
       <div><div style={{fontFamily:mono,fontSize:"9px",color:C.amber,letterSpacing:"0.22em",marginBottom:5}}>◈ STRAT OS</div>
         <h1 style={{fontFamily:sans,fontWeight:700,fontSize:"21px",color:"#F3F6FA",letterSpacing:"-0.02em",lineHeight:1}}>
-          {view==="form"?(isEdit?"Edit Brief":"New Brief"):view==="import"?"Import Trades":tab==="watch"?"Watchlist":tab==="gex"?"Today's GEX":tab==="review"?"Weekly Review":tab==="settings"?"Settings":"Trading Platform"}</h1>
-        <div style={{fontFamily:mono,fontSize:"9px",color:C.dim,marginTop:4,letterSpacing:"0.06em"}}>NQ · ES · SPY · QQQ · STRAT · GEX · TFC</div></div>
+          {view==="form"?(isEdit?"Edit Brief":"New Brief"):view==="import"?"Import Trades":tab==="watch"?"Watchlist":tab==="gex"?"Today's GEX":tab==="review"?"Weekly Review":tab==="settings"?"Settings":"Trading Platform"}</h1></div>
       <div style={{textAlign:"right"}}>
         <div style={{fontFamily:mono,fontSize:"15px",color:C.muted}}>{clock.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}</div>
         <div style={{display:"flex",gap:5,alignItems:"center",justifyContent:"flex-end",marginTop:3}}>
@@ -928,7 +1130,7 @@ function StratOS(){
     {/* HOME */}
     {tab==="home"&&view==="list"&&(<div style={{animation:"fadeUp 0.3s ease both"}}>
       <StatsBar entries={entries}/>
-      <DisciplinePanel/>
+      <DisciplinePanel breakers={settings.circuitBreakers} onGoToSettings={()=>setTab("settings")}/>
       <div style={{display:"flex",gap:7,marginBottom:16,flexWrap:"wrap"}}>
         <Pill color={C.amber} active={filter==="ALL"} onClick={()=>setFilter("ALL")}>ALL</Pill>
         {INSTRUMENTS.map(i=><Pill key={i.id} color={i.color} active={filter===i.id} onClick={()=>setFilter(i.id)}>{i.id}</Pill>)}</div>
